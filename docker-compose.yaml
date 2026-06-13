@@ -1,0 +1,60 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/workspace
+      - /workspace/web/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://api:8000
+    depends_on:
+      - api
+    command: sleep infinity
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./api:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://folio:folio@postgres:5432/folio
+      - PYTHONPATH=/app
+    depends_on:
+      - postgres
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./api:/app
+    environment:
+      - DATABASE_URL=postgresql://folio:folio@postgres:5432/folio
+      - PYTHONPATH=/app
+    depends_on:
+      - postgres
+    command: dramatiq app.workers
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=folio
+      - POSTGRES_PASSWORD=folio
+      - POSTGRES_DB=folio
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
