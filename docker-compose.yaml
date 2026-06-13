@@ -26,7 +26,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://folio:folio@postgres:5432/folio
+      - DATABASE_URL=postgresql://postgres:moxbaj-Zynxu6-fugnyx@db.jdvyoywfzvfrcckaytmm.supabase.co:5432/postgres
       - PYTHONPATH=/app
     depends_on:
       - postgres
@@ -39,7 +39,7 @@ services:
     volumes:
       - ./api:/app
     environment:
-      - DATABASE_URL=postgresql://folio:folio@postgres:5432/folio
+      - DATABASE_URL=postgresql://postgres:moxbaj-Zynxu6-fugnyx@db.jdvyoywfzvfrcckaytmm.supabase.co:5432/postgres
       - PYTHONPATH=/app
     depends_on:
       - postgres
