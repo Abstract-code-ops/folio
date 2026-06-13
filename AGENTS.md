@@ -9,5 +9,5 @@ Before starting any task, read these files in full:
 6. progress-tracker.md
 
 These are your source of truth. Never invent behaviour not defined in them.
-Follow docs/ai-workflow-rules.md exactly — one architecture layer per task,
-update docs/progress-tracker.md after every file written.
+Follow ai-workflow-rules.md exactly — one architecture layer per task,
+update progress-tracker.md after every file written.
