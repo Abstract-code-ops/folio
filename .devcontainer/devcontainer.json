@@ -1,15 +1,12 @@
 {
   "name": "Folio Dev",
-  "dockerComposeFile": "../docker-compose.yml",
-  "service": "web",
-  "workspaceFolder": "/workspace",
-  "forwardPorts": [3000, 8000, 5432],
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "forwardPorts": [3000, 8000],
   "portsAttributes": {
     "3000": { "label": "Next.js" },
-    "8000": { "label": "FastAPI" },
-    "5432": { "label": "Postgres" }
+    "8000": { "label": "FastAPI" }
   },
-  "postCreateCommand": "cd web && npm install && cd ../api && pip install -r requirements.txt --break-system-packages",
+  "postCreateCommand": "node --version && npm install -g reasonix@next",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -17,17 +14,8 @@
         "ms-python.vscode-pylance",
         "bradlc.vscode-tailwindcss",
         "esbenp.prettier-vscode",
-        "ms-azuretools.vscode-docker",
         "charliermarsh.ruff"
-      ],
-      "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "editor.formatOnSave": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
-        "[python]": {
-          "editor.defaultFormatter": "charliermarsh.ruff"
-        }
-      }
+      ]
     }
   }
 }
