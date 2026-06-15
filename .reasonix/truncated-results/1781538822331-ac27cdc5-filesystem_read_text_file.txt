@@ -1,0 +1,462 @@
+=== pytest run 20260615-155206 ===
+Exit code: 1
+
+==================================== ERRORS ====================================
+_____________ ERROR at setup of TestBookCreate.test_create_minimal _____________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8857a73e0> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8857a73e0> can't render element of type JSONB
+______________ ERROR at setup of TestBookCreate.test_create_full _______________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e884204080> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e884204080> can't render element of type JSONB
+_____________ ERROR at setup of TestBookStatus.test_default_status _____________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e884205a90> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e884205a90> can't render element of type JSONB
+_________ ERROR at setup of TestBookStatus.test_set_status_processing __________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e3320> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e3320> can't render element of type JSONB
+__________ ERROR at setup of TestBookStatus.test_set_status_completed __________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e2690> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e2690> can't render element of type JSONB
+___________ ERROR at setup of TestBookStatus.test_set_status_failed ____________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e0c50> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e0c50> can't render element of type JSONB
+_____________ ERROR at setup of TestBookQuery.test_query_by_title ______________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+The above exception was the direct cause of the following exception:
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6647: in visit_create_table
+    processed = self.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6678: in visit_create_column
+    text = self.get_column_specification(column, first_pk=first_pk)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/sqlite/base.py:1541: in get_column_specification
+    coltype = self.dialect.type_compiler_instance.process(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:960: in process
+    return type_._compiler_dispatch(self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:139: in _compiler_dispatch
+    return visitor.visit_unsupported_compilation(self, err, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:965: in visit_unsupported_compilation
+    raise exc.UnsupportedCompilationError(self, element) from err
+E   sqlalchemy.exc.UnsupportedCompilationError: Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e66f0> can't render element of type JSONB (Background on this error at: https://sqlalche.me/e/20/l7de)
+
+The above exception was the direct cause of the following exception:
+tests/conftest.py:42: in engine
+    Base.metadata.create_all(bind=e)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/schema.py:5868: in create_all
+    bind._run_ddl_visitor(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3253: in _run_ddl_visitor
+    conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2459: in _run_ddl_visitor
+    visitorcallable(self.dialect, self, **kwargs).traverse_single(element)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:918: in visit_metadata
+    self.traverse_single(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:664: in traverse_single
+    return meth(obj, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:956: in visit_table
+    )._invoke_with(self.connection)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:314: in _invoke_with
+    return bind.execute(self)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1418: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:180: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1526: in _execute_ddl
+    compiled = ddl.compile(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:308: in compile
+    return self._compiler(dialect, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:69: in _compiler
+    return dialect.ddl_compiler(dialect, self, **kw)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:870: in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:915: in process
+    return obj._compiler_dispatch(self, **kwargs)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:141: in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:6657: in visit_create_table
+    raise exc.CompileError(
+E   sqlalchemy.exc.CompileError: (in table 'coverage_event', column 'event_metadata'): Compiler <sqlalchemy.dialects.sqlite.base.SQLiteTypeCompiler object at 0x71e8854e66f0> can't render element of type JSONB
+_____________ ERROR at setup of TestBookQuery.test_query_by_status _____________
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py:137: in _compiler_dispatch
+    meth = getter(visitor)
+E   AttributeError: 'SQLiteTypeCompiler' object has no attribute 'visit_JSONB'. Did you mean: 'visit_JSON'?
+
+T
+
+[…truncated 159487 chars — raise BridgeOptions.maxResultChars, or call the tool with a narrower scope (filter, head, pagination)…]
+
+t_connective_section
+ERROR tests/models/test_section.py::TestSectionRelationships::test_book_sections_relationship
+ERROR tests/models/test_section.py::TestSectionRelationships::test_parent_child_relationship
+ERROR tests/models/test_section.py::TestSectionQuery::test_sections_by_book
+ERROR tests/models/test_section.py::TestSectionQuery::test_no_sections_empty_book
+ERROR tests/services/test_books.py::TestListBooks::test_empty_library - sqlal...
+ERROR tests/services/test_books.py::TestListBooks::test_list_all_books - sqla...
+ERROR tests/services/test_books.py::TestListBooks::test_filter_by_status - sq...
+ERROR tests/services/test_books.py::TestListBooks::test_pagination - sqlalche...
+ERROR tests/services/test_books.py::TestGetBook::test_get_existing_book - sql...
+ERROR tests/services/test_books.py::TestGetBook::test_get_nonexistent_book - ...
+ERROR tests/services/test_books.py::TestGetBook::test_get_book_response_shape
+============== 1 failed, 8 passed, 1 warning, 42 errors in 31.82s ==============
+
+Exit code: 1

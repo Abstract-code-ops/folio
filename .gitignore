@@ -4,3 +4,8 @@ __pycache__/
 *.pyc
 node_modules/
 .next/
+# Ignore all Markdown files
+*.md
+
+# But don't ignore README.md
+!README.md
