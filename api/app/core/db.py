@@ -71,7 +71,7 @@ class Vector(TypeDecorator):
     impl = JSON
     cache_ok = True
 
-    def __init__(self, dim: int = 1536):
+    def __init__(self, dim: int = 768):
         self.dim = dim
         super().__init__()
 

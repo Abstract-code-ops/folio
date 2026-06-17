@@ -43,4 +43,4 @@ if _broker is not None:
 
 # Each actor module is imported here to ensure the @dramatiq.actor
 # decorator fires after the broker is configured.
-from app.workers import note_session  # noqa: F401, E402
+from app.workers import ingest, note_session  # noqa: F401, E402

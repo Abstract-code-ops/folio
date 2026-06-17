@@ -7,17 +7,26 @@ level and passed explicitly to service functions.
 
 from __future__ import annotations
 
+import json
+import logging
 import uuid
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
-from app.core.db import get_async_session
+from app.core.db import AsyncSessionLocal, get_async_session
+from app.models.coverage_event import CoverageEvent, EventType
 from app.models.note_session import NoteSource
+from app.models.section import Section
+from app.pipeline.note_gen import generate_section_notes
 from app.services.notes import NoteSessionResponse, create_note_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -32,6 +41,14 @@ class CreateNoteSessionRequest(BaseModel):
     raw_text: str
     source: NoteSource
     title: Optional[str] = None
+
+
+class GenerateNotesRequest(BaseModel):
+    """Request body for ``POST /notes/generate``."""
+
+    book_id: uuid.UUID
+    chapter_start: int = 0
+    chapter_end: int = 0
 
 
 # ── Endpoints ──────────────────────────────────────────────────
@@ -60,3 +77,113 @@ async def post_note_session(
         source=body.source,
         title=body.title,
     )
+
+
+@router.post("/generate")
+async def post_generate_notes(
+    body: GenerateNotesRequest,
+    user_id: uuid.UUID = Depends(get_current_user),
+) -> StreamingResponse:
+    """Generate AI study notes for a chapter range, streamed section by section.
+
+    Accepts a book ID and chapter range. For each section in the range,
+    the LLM (Cerebras) generates structured notes grounded exclusively
+    in that section's text and metadata. Results are streamed as
+    newline-delimited JSON (NDJSON) — one ``GeneratedSectionNotes``
+    object per line.
+
+    After each section completes, a ``notes_generated`` coverage event
+    is emitted so the coverage map reflects the new contribution.
+    """
+    return StreamingResponse(
+        _generate_notes_stream(user_id, body.book_id, body.chapter_start, body.chapter_end),
+        media_type="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+# ── Streaming generator ────────────────────────────────────────
+
+
+async def _generate_notes_stream(
+    user_id: uuid.UUID,
+    book_id: uuid.UUID,
+    chapter_start: int,
+    chapter_end: int,
+) -> AsyncGenerator[bytes, None]:
+    """Async generator that yields NDJSON lines of generated notes."""
+    async with AsyncSessionLocal() as db:
+        try:
+            # Fetch sections in the chapter range, ordered by hierarchy
+            result = await db.execute(
+                select(Section)
+                .where(
+                    Section.book_id == book_id,
+                    Section.chapter_index >= chapter_start,
+                    Section.chapter_index <= chapter_end,
+                )
+                .order_by(Section.chapter_index, Section.section_index)
+            )
+            sections = result.scalars().all()
+
+            if not sections:
+                yield json.dumps({"error": "No sections found in this chapter range"}).encode() + b"\n"
+                return
+
+            for section in sections:
+                # Skip connective sections — too short for meaningful notes
+                if section.is_connective:
+                    continue
+
+                # Skip sections without raw text
+                if not section.raw_text:
+                    continue
+
+                try:
+                    notes = await generate_section_notes(
+                        section_id=str(section.id),
+                        heading=section.heading,
+                        raw_text=section.raw_text,
+                        page_start=section.page_start,
+                        page_end=section.page_end,
+                        metadata=section.section_metadata,
+                    )
+
+                    # Emit coverage event for this section
+                    db.add(
+                        CoverageEvent(
+                            user_id=user_id,
+                            book_id=book_id,
+                            section_id=section.id,
+                            event_type=EventType.NOTES_GENERATED,
+                            event_metadata={
+                                "chapter_range": f"{chapter_start}-{chapter_end}",
+                            },
+                        )
+                    )
+                    await db.flush()
+
+                    # Yield the generated notes as NDJSON
+                    yield notes.model_dump_json().encode() + b"\n"
+
+                except Exception as e:
+                    logger.warning(
+                        "Note generation failed for section %s: %s",
+                        section.id, e,
+                    )
+                    # Yield a minimal error placeholder so the stream continues
+                    error_line = json.dumps({
+                        "section_id": str(section.id),
+                        "section_heading": section.heading,
+                        "error": str(e),
+                    })
+                    yield error_line.encode() + b"\n"
+
+            await db.commit()
+
+        except Exception:
+            await db.rollback()
+            raise

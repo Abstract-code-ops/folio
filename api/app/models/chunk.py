@@ -45,7 +45,7 @@ class Chunk(TimestampMixin, Base):
         comment="Chunk text content, never crosses a section boundary",
     )
     embedding: Mapped[Optional[list[float]]] = mapped_column(
-        Vector(1536),
+        Vector(768),
         nullable=True,
         comment="pgvector embedding for Q&A retrieval; dimension matches configured embedding model",
     )

@@ -1,7 +1,8 @@
-"""Book selection and ingestion status route handlers.
+"""Book selection, ingestion status, and ingestion trigger route handlers.
 
-Endpoints are unauthenticated — library browsing does not require
-a user account (see project-overview.md).
+Browse endpoints are unauthenticated — library browsing does not
+require a user account (see project-overview.md). The ingestion
+trigger endpoint is authenticated since it initiates background work.
 """
 
 from __future__ import annotations
@@ -10,8 +11,10 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user
 from app.core.db import get_async_session
 from app.models.book import IngestionStatus
 from app.services.books import (
@@ -19,9 +22,17 @@ from app.services.books import (
     BookResponse,
     get_book,
     list_books,
+    trigger_ingestion,
 )
 
 router = APIRouter(prefix="/books", tags=["books"])
+
+
+class IngestionJobResponse(BaseModel):
+    """Response returned after triggering a book ingestion job."""
+
+    book_id: uuid.UUID
+    job_id: str
 
 
 @router.get("", response_model=BookListResponse)
@@ -52,3 +63,25 @@ async def get_book_by_id(
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
     return book
+
+
+@router.post("/{book_id}/ingest", response_model=IngestionJobResponse)
+async def post_ingest_book(
+    book_id: uuid.UUID,
+    db: AsyncSession = Depends(get_async_session),
+    user_id: uuid.UUID = Depends(get_current_user),
+) -> IngestionJobResponse:
+    """Trigger background ingestion for a book.
+
+    Downloads the PDF, parses it into sections, chunks the text,
+    embeds sections and chunks, and extracts structured metadata.
+    Runs entirely in a Dramatiq background worker.
+
+    Returns the job ID immediately for status polling.
+    """
+    try:
+        job_id = await trigger_ingestion(db, book_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return IngestionJobResponse(book_id=book_id, job_id=job_id)

@@ -2,7 +2,12 @@
 
 import type { BookListResponse, BookResponse, IngestionStatus } from "@/types/books";
 import type { CoverageMapResponse } from "@/types/coverage";
-import type { NoteSessionResponse, NoteSource } from "@/types/notes";
+import type {
+  GeneratedSectionNotes,
+  NoteSessionResponse,
+  NoteSource,
+} from "@/types/notes";
+import type { QaEvent } from "@/types/chat";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -46,6 +51,67 @@ class ApiClient {
     return res.json() as Promise<CoverageMapResponse>;
   }
 
+  // ── Q&A ─────────────────────────────────────────────────────
+
+  async askQuestion(
+    bookId: string,
+    question: string,
+  ): Promise<ReadableStream<QaEvent>> {
+    const url = `${this.baseUrl}/qa/${bookId}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to ask question: ${res.statusText}`);
+    }
+    if (!res.body) {
+      throw new Error("Response body is null — streaming not supported");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    return new ReadableStream<QaEvent>({
+      async start(controller) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              if (buffer.trim()) {
+                try {
+                  controller.enqueue(JSON.parse(buffer));
+                } catch {
+                  // skip malformed trailing data
+                }
+              }
+              controller.close();
+              return;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const parsed = JSON.parse(trimmed) as QaEvent;
+                controller.enqueue(parsed);
+              } catch {
+                // skip malformed lines
+              }
+            }
+          }
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+    });
+  }
+
   // ── Notes ───────────────────────────────────────────────────
 
   async createNoteSession(params: {
@@ -64,6 +130,73 @@ class ApiClient {
       throw new Error(`Failed to create note session: ${res.statusText}`);
     }
     return res.json() as Promise<NoteSessionResponse>;
+  }
+
+  async generateNotes(
+    bookId: string,
+    chapterStart: number,
+    chapterEnd: number,
+  ): Promise<ReadableStream<GeneratedSectionNotes>> {
+    const url = `${this.baseUrl}/notes/generate`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        book_id: bookId,
+        chapter_start: chapterStart,
+        chapter_end: chapterEnd,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to generate notes: ${res.statusText}`);
+    }
+    if (!res.body) {
+      throw new Error("Response body is null — streaming not supported");
+    }
+
+    // Wrap the byte ReadableStream into a JSON-object ReadableStream
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    return new ReadableStream<GeneratedSectionNotes>({
+      async start(controller) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              // Flush remaining buffer
+              if (buffer.trim()) {
+                try {
+                  controller.enqueue(JSON.parse(buffer));
+                } catch {
+                  // skip malformed trailing data
+                }
+              }
+              controller.close();
+              return;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            // Keep the last (potentially incomplete) line in the buffer
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const parsed = JSON.parse(trimmed) as GeneratedSectionNotes;
+                controller.enqueue(parsed);
+              } catch {
+                // skip malformed lines (e.g. error placeholders)
+              }
+            }
+          }
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+    });
   }
 
   async getBook(bookId: string, loadSections?: boolean): Promise<BookResponse> {

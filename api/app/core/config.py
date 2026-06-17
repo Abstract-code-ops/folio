@@ -28,11 +28,12 @@ class Settings(BaseSettings):
     better_auth_session_table: str = "session"
 
     # ── AI Providers (LiteLLM) ────────────────────────────────
-    litellm_embedding_model: str = "text-embedding-ada-002"
-    litellm_embedding_dimension: int = 1536
+    # Embedding → Gemini. Generation / Q&A → Cerebras.
+    litellm_embedding_model: str = "gemini/text-embedding-004"
+    litellm_embedding_dimension: int = 768
     litellm_metadata_model: str = "gemini/gemini-2.0-flash"
-    litellm_note_gen_model: str = "gemini/gemini-2.0-flash"
-    litellm_qa_model: str = "gemini/gemini-2.0-flash"
+    litellm_note_gen_model: str = "cerebras/llama-3.3-70b"
+    litellm_qa_model: str = "cerebras/llama-3.3-70b"
 
     # ── Coverage scoring thresholds ───────────────────────────
     coverage_points_page_viewed: int = 1

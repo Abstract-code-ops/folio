@@ -116,3 +116,47 @@ async def get_books_by_status(
 ) -> BookListResponse:
     """Convenience wrapper — filter books by a single ingestion status."""
     return await list_books(db, status=status, limit=limit, offset=offset)
+
+
+async def trigger_ingestion(
+    db: AsyncSession,
+    book_id: uuid.UUID,
+) -> str:
+    """Trigger background ingestion for a book.
+
+    Validates the book exists and is not already ingested or currently
+    being ingested. Enqueues a Dramatiq ``ingest_book`` job and returns
+    the job ID.
+
+    Args:
+        db: Async SQLAlchemy session.
+        book_id: UUID of the book to ingest.
+
+    Returns:
+        Dramatiq job message ID as a string.
+
+    Raises:
+        ValueError: If the book is not found or already ingested.
+    """
+    from app.models.book import Book  # noqa: F811
+
+    book = await db.get(Book, book_id)
+    if book is None:
+        raise ValueError(f"Book {book_id} not found")
+
+    if book.ingestion_status == IngestionStatus.COMPLETED:
+        raise ValueError(f"Book {book_id} is already ingested")
+
+    if book.ingestion_status == IngestionStatus.PROCESSING:
+        raise ValueError(f"Book {book_id} is currently being ingested")
+
+    # Enqueue the ingestion job
+    # Lazy import avoids pulling in Dramatiq broker at module load time
+    from app.workers.ingest import ingest_book  # noqa: C0301
+    job = ingest_book.send(str(book_id))
+
+    # Mark as processing
+    book.ingestion_status = IngestionStatus.PROCESSING
+    await db.commit()
+
+    return job.message_id

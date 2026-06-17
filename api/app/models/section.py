@@ -112,7 +112,7 @@ class Section(TimestampMixin, Base):
 
     # ── Embedding (pgvector) ──────────────────────────────────
     embedding: Mapped[Optional[list[float]]] = mapped_column(
-        Vector(1536),
+        Vector(768),
         nullable=True,
         comment="pgvector embedding for coverage similarity matching; dimension matches the configured embedding model",
     )
