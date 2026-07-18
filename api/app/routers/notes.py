@@ -24,7 +24,12 @@ from app.models.coverage_event import CoverageEvent, EventType
 from app.models.note_session import NoteSource
 from app.models.section import Section
 from app.pipeline.note_gen import generate_section_notes
-from app.services.notes import NoteSessionResponse, create_note_session
+from app.services.notes import (
+    NoteSessionListResponse,
+    NoteSessionResponse,
+    create_note_session,
+    list_note_sessions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,24 @@ class GenerateNotesRequest(BaseModel):
 
 
 # ── Endpoints ──────────────────────────────────────────────────
+
+
+@router.get("", response_model=NoteSessionListResponse)
+async def get_note_sessions(
+    book_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> NoteSessionListResponse:
+    """List note sessions for a user + book, most recent first."""
+    return await list_note_sessions(
+        db,
+        user_id=user_id,
+        book_id=book_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("", response_model=NoteSessionResponse, status_code=201)

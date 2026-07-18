@@ -63,6 +63,7 @@ class Book(TimestampMixin, Base):
         SAEnum(
             IngestionStatus,
             name="ingestion_status",
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         default=IngestionStatus.NOT_STARTED,
         nullable=False,

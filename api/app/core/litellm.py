@@ -23,6 +23,11 @@ from app.core.config import settings
 # and a single failure shouldn't back up the ingestion pipeline.
 litellm.drop_params = True
 
+# Tell LiteLLM where to find the local Ollama server.
+# Defaults to http://localhost:11434 — can be overridden via env var.
+import os
+os.environ.setdefault("OLLAMA_API_BASE", "http://localhost:11434")
+
 # ── Embedding ─────────────────────────────────────────────────
 
 EMBEDDING_MODEL: str = settings.litellm_embedding_model
@@ -30,7 +35,7 @@ EMBEDDING_DIMENSION: int = settings.litellm_embedding_dimension
 
 # ── Generation models (for reference by other modules) ────────
 
-METADATA_MODEL: str = settings.litellm_metadata_model
+METADATA_MODEL: str = settings.cerebras_metadata_model
 NOTE_GEN_MODEL: str = settings.litellm_note_gen_model
 QA_MODEL: str = settings.litellm_qa_model
 

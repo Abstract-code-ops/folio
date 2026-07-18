@@ -4,12 +4,16 @@ import type { BookListResponse, BookResponse, IngestionStatus } from "@/types/bo
 import type { CoverageMapResponse } from "@/types/coverage";
 import type {
   GeneratedSectionNotes,
+  NoteSessionListResponse,
   NoteSessionResponse,
   NoteSource,
 } from "@/types/notes";
 import type { QaEvent } from "@/types/chat";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Use a relative proxy URL so the browser talks to Next.js (same origin),
+// which forwards to the FastAPI backend inside the Docker network.
+// Override via NEXT_PUBLIC_API_URL env var if needed.
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/proxy";
 
 class ApiClient {
   private baseUrl: string;
@@ -113,6 +117,21 @@ class ApiClient {
   }
 
   // ── Notes ───────────────────────────────────────────────────
+
+  async listNoteSessions(
+    bookId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<NoteSessionListResponse> {
+    const params = new URLSearchParams({ book_id: bookId });
+    if (options?.limit) params.set("limit", String(options.limit));
+    if (options?.offset) params.set("offset", String(options.offset));
+    const url = `${this.baseUrl}/notes?${params.toString()}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Failed to list note sessions: ${res.statusText}`);
+    }
+    return res.json() as Promise<NoteSessionListResponse>;
+  }
 
   async createNoteSession(params: {
     book_id: string;

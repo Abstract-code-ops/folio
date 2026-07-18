@@ -28,12 +28,28 @@ class Settings(BaseSettings):
     better_auth_session_table: str = "session"
 
     # ── AI Providers (LiteLLM) ────────────────────────────────
-    # Embedding → Gemini. Generation / Q&A → Cerebras.
-    litellm_embedding_model: str = "gemini/text-embedding-004"
+    # Embedding → Nomic via local Ollama.
+    # Generation / Q&A / Metadata → Cerebras (or Gemini for metadata).
+    litellm_embedding_model: str = "ollama/nomic-embed-text"
     litellm_embedding_dimension: int = 768
-    litellm_metadata_model: str = "gemini/gemini-2.0-flash"
-    litellm_note_gen_model: str = "cerebras/llama-3.3-70b"
-    litellm_qa_model: str = "cerebras/llama-3.3-70b"
+    # Metadata extraction uses Gemini as primary, Cerebras as fallback.
+    gemini_metadata_model: str = "gemini-2.0-flash"  # google-genai SDK uses bare model name, not LiteLLM's "gemini/..." prefix
+    cerebras_metadata_model: str = "cerebras/gemma-4-31b"
+    # Legacy alias — kept for backward compat; now maps to cerebras_metadata_model.
+    litellm_metadata_model: str = "cerebras/gemma-4-31b"
+    # General metadata model string (used by litellm.py METADATA_MODEL reference).
+    # Note: metadata.py no longer reads this directly — see gemini_metadata_model / cerebras_metadata_model.
+    litellm_note_gen_model: str = "cerebras/gemma-4-31b"
+    litellm_qa_model: str = "cerebras/gemma-4-31b"
+
+    # ── Metadata extraction retry config ──────────────────────
+    # Gemini retry: fixed backoff for RateLimitError.
+    gemini_max_retries: int = 3
+    gemini_retry_wait_seconds: int = 120
+    # Cerebras retry: exponential backoff.
+    cerebras_max_retries: int = 5
+    cerebras_retry_min_wait: int = 10
+    cerebras_retry_max_wait: int = 90
 
     # ── Coverage scoring thresholds ───────────────────────────
     coverage_points_page_viewed: int = 1

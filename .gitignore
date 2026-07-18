@@ -7,5 +7,6 @@ node_modules/
 # Ignore all Markdown files
 *.md
 
-# But don't ignore README.md
+# But don't ignore README.md or dev-scripts.md
 !README.md
+!dev-scripts.md

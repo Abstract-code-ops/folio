@@ -20,6 +20,7 @@ from app.models.book import IngestionStatus
 from app.services.books import (
     BookListResponse,
     BookResponse,
+    create_book,
     get_book,
     list_books,
     trigger_ingestion,
@@ -28,11 +29,41 @@ from app.services.books import (
 router = APIRouter(prefix="/books", tags=["books"])
 
 
+class CreateBookRequest(BaseModel):
+    """Request body for ``POST /books``."""
+
+    title: str
+    author: str
+    description: Optional[str] = None
+    cover_image_url: Optional[str] = None
+    storage_url: str
+
+
 class IngestionJobResponse(BaseModel):
     """Response returned after triggering a book ingestion job."""
 
     book_id: uuid.UUID
     job_id: str
+
+
+@router.post("", response_model=BookResponse, status_code=201)
+async def post_create_book(
+    body: CreateBookRequest,
+    db: AsyncSession = Depends(get_async_session),
+) -> BookResponse:
+    """Add a new book to the open-access library.
+
+    Books are shared global resources. The ingestion pipeline is not
+    triggered here — call ``POST /books/{id}/ingest`` separately.
+    """
+    return await create_book(
+        db,
+        title=body.title,
+        author=body.author,
+        storage_url=body.storage_url,
+        description=body.description,
+        cover_image_url=body.cover_image_url,
+    )
 
 
 @router.get("", response_model=BookListResponse)

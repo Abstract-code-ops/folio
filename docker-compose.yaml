@@ -27,12 +27,13 @@ services:
       - ./api:/app
     ports:
       - "8000:8000"
+      - "11434:11434"
     env_file:
       - .env
     environment:
       - PYTHONPATH=/app
-    depends_on:
-      - postgres
+      - OLLAMA_API_BASE=http://localhost:11434
+      - OPENAI_MAX_RETRIES=0
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   worker:
@@ -45,26 +46,6 @@ services:
       - .env
     environment:
       - PYTHONPATH=/app
-    depends_on:
-      - postgres
-      - redis
+      - OLLAMA_API_BASE=http://localhost:11434
+      - OPENAI_MAX_RETRIES=0
     command: dramatiq app.workers
-
-  postgres:
-    image: pgvector/pgvector:pg16
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=folio
-      - POSTGRES_PASSWORD=folio
-      - POSTGRES_DB=folio
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-volumes:
-  postgres_data:

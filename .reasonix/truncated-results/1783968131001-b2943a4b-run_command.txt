@@ -1,0 +1,1261 @@
+$ docker compose exec api python3 -c "
+import asyncio
+from app.pipeline.parser import parse_pdf
+url = 'https://jdvyoywfzvfrcckaytmm.supabase.co/storage/v1/object/public/book-pdfs/just-use-postgres.pdf'
+result = asyncio.run(parse_pdf(url))
+print(f'Sections: {len(result.sections)}')
+print(f'Total words: {result.total_word_count}')
+for s in result.sections[:5]:
+    print(f'  {s.heading[:50]:50s}  words={s.word_count}  conn={s.is_connective}')
+" 2>&1
+[killed after timeout]
+time="2026-07-13T18:40:11Z" level=warning msg="/home/ubuntu/folio/docker-compose.yaml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is not a stream
+
+MuPDF error: format error: object is
+
+[… truncated 933 chars …]

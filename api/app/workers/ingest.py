@@ -18,15 +18,22 @@ import dramatiq
 from sqlalchemy import select
 
 from app.core.db import SyncSessionLocal
-from app.core.litellm import embed_text_sync
+from app.core.litellm import embed_text
 from app.models.book import Book, IngestionStatus
 from app.models.chunk import Chunk
 from app.models.section import Section
 from app.pipeline.chunker import chunk_section
-from app.pipeline.metadata import extract_metadata
+from app.pipeline.metadata import extract_metadata_batch
 from app.pipeline.parser import parse_pdf
 
 logger = logging.getLogger(__name__)
+
+
+def log(msg: str) -> None:
+    """Log with immediate flush so we see progress in real time."""
+    logger.info(msg)
+    import sys
+    sys.stdout.flush()
 
 
 @dramatiq.actor(max_retries=2, min_backoff=30_000, max_backoff=120_000)
@@ -45,7 +52,6 @@ def ingest_book(book_id: str) -> None:
                 logger.warning("Book %s not found — skipping ingestion", book_id)
                 return
 
-            # Idempotency check
             if book.ingestion_status == IngestionStatus.COMPLETED:
                 logger.info("Book %s already ingested — skipping", book_id)
                 return
@@ -54,11 +60,9 @@ def ingest_book(book_id: str) -> None:
                 logger.warning("Book %s is already being ingested — skipping", book_id)
                 return
 
-            # Mark as processing
             book.ingestion_status = IngestionStatus.PROCESSING
             db.commit()
 
-            # Run the ingestion pipeline (async wrapped)
             asyncio.run(_run_pipeline(db, book))
 
         except Exception:
@@ -69,83 +73,143 @@ def ingest_book(book_id: str) -> None:
 
 
 async def _run_pipeline(db: SyncSessionLocal, book: Book) -> None:
-    """Core async pipeline: parse → chunk → embed → metadata → persist."""
-    # 1. Parse PDF
-    logger.info("Parsing PDF: %s", book.storage_url)
-    parse_result = await parse_pdf(book.storage_url)
+    """Core async pipeline: parse → batch-metadata → chunk → embed → persist."""
+    # ── STEP 1: Parse PDF ─────────────────────────────────────
+    log("[PIPELINE] Step 1/5: Parsing PDF...")
+    try:
+        parse_result = await parse_pdf(book.storage_url)
+        log(f"[PIPELINE] Step 1 OK: {len(parse_result.sections)} sections, {parse_result.total_word_count} words")
+    except Exception as e:
+        log(f"[PIPELINE] Step 1 FAILED: {e}")
+        raise
 
     total_sections = len(parse_result.sections)
-    logger.info(
-        "Parsed %d sections from '%s'",
-        total_sections, parse_result.title,
-    )
 
-    # Update Book metadata from parse result if not already set
     if not book.title or book.title == "Unknown Title":
         book.title = parse_result.title
     if not book.author or book.author == "Unknown Author":
         book.author = parse_result.author
+    db.flush()
 
-    # 2. Process each section: metadata → chunk → embed → persist
-    for idx, parsed_sec in enumerate(parse_result.sections):
-        logger.info(
-            "Processing section %d/%d: %s",
-            idx + 1, total_sections, parsed_sec.heading,
-        )
-
-        # 2a. Extract metadata (LLM call)
-        metadata = await extract_metadata(
-            heading=parsed_sec.heading,
-            raw_text=parsed_sec.raw_text,
-        )
-
-        # 2b. Embed the section
-        section_embedding = embed_text_sync(parsed_sec.heading + "\n" + parsed_sec.raw_text[:2000])
-
-        # 2c. Create Section record
-        section = Section(
-            book_id=book.id,
-            chapter_index=parsed_sec.chapter_index,
-            section_index=parsed_sec.section_index,
-            level=parsed_sec.level,
-            heading=parsed_sec.heading,
-            page_start=parsed_sec.page_start,
-            page_end=parsed_sec.page_end,
-            word_count=parsed_sec.word_count,
-            is_connective=parsed_sec.is_connective,
-            raw_text=parsed_sec.raw_text,
-            section_metadata=metadata,
-            embedding=section_embedding,
-        )
-        db.add(section)
-        db.flush()  # get section.id for chunks
-
-        # 2d. Chunk the section text
-        chunks = chunk_section(parsed_sec.raw_text)
-
-        for chunk_result in chunks:
-            # Embed each chunk
-            chunk_embedding = embed_text_sync(chunk_result.content)
-
-            chunk = Chunk(
-                section_id=section.id,
-                chunk_index=chunk_result.chunk_index,
-                content=chunk_result.content,
-                embedding=chunk_embedding,
+    # ── STEP 2: Check for existing sections (resume support) ──
+    log("[PIPELINE] Step 2/5: Checking for existing sections (resume)...")
+    existing = set()
+    try:
+        if total_sections > 0:
+            result = db.execute(
+                select(Section.heading).where(
+                    Section.book_id == book.id,
+                    Section.heading.in_([s.heading for s in parse_result.sections]),
+                )
             )
-            db.add(chunk)
+            existing = {row[0] for row in result.fetchall()}
+        log(f"[PIPELINE] Step 2 OK: {len(existing)} sections already exist")
+    except Exception as e:
+        log(f"[PIPELINE] Step 2 FAILED: {e}")
+        raise
 
-        # Flush periodically to avoid holding too many uncommitted records
-        if idx % 10 == 0:
+    # ── STEP 3: Batch metadata extraction ─────────────────────
+    log("[PIPELINE] Step 3/5: Preparing batch metadata...")
+    try:
+        sections_for_metadata: list[tuple[str, str]] = []
+        for parsed_sec in parse_result.sections:
+            if parsed_sec.heading in existing:
+                continue
+            if parsed_sec.is_connective:
+                sections_for_metadata.append((parsed_sec.heading, ""))
+                continue
+            sections_for_metadata.append((parsed_sec.heading, parsed_sec.raw_text))
+
+        to_skip = len(parse_result.sections) - len(sections_for_metadata)
+        log(f"[PIPELINE] Step 3: {len(sections_for_metadata)} need metadata ({to_skip} skipped)")
+
+        metadata_results: list[dict | None] = [None] * len(sections_for_metadata)
+        if sections_for_metadata:
+            log(f"[PIPELINE] Calling extract_metadata_batch (batch_size=10)...")
+            metadata_results = await extract_metadata_batch(
+                sections_for_metadata,
+                batch_size=20,
+            )
+            log(f"[PIPELINE] Step 3 OK: {len(metadata_results)} metadata results")
+        else:
+            log("[PIPELINE] Step 3: All sections already have metadata — skipping")
+    except Exception as e:
+        log(f"[PIPELINE] Step 3 FAILED: {e}")
+        raise
+
+    # ── STEP 4: Process sections (create Section + Chunk + embed) ──
+    log("[PIPELINE] Step 4/5: Processing sections (embed → chunk → persist)...")
+    meta_idx = 0
+    try:
+        for idx, parsed_sec in enumerate(parse_result.sections):
+            if parsed_sec.heading in existing:
+                continue
+
+            log(f"[PIPELINE]   Section {idx+1}/{total_sections}: '{parsed_sec.heading[:50]}'")
+
+            # Get metadata
+            metadata = metadata_results[meta_idx] if meta_idx < len(metadata_results) else {}
+            if metadata is None:
+                metadata = {}
+            meta_idx += 1
+
+            # Embed the section heading + text
+            embed_input = parsed_sec.heading + "\n" + parsed_sec.raw_text[:2000]
+            log(f"[PIPELINE]     Embedding section...")
+            section_embedding = await embed_text(embed_input)
+
+            # Create Section record
+            section = Section(
+                book_id=book.id,
+                chapter_index=parsed_sec.chapter_index,
+                section_index=parsed_sec.section_index,
+                level=parsed_sec.level,
+                heading=parsed_sec.heading,
+                page_start=parsed_sec.page_start,
+                page_end=parsed_sec.page_end,
+                word_count=parsed_sec.word_count,
+                is_connective=parsed_sec.is_connective,
+                raw_text=parsed_sec.raw_text,
+                section_metadata=metadata,
+                embedding=section_embedding,
+            )
+            db.add(section)
             db.flush()
+            log(f"[PIPELINE]     Section created: {section.id}")
 
-    # 3. Update book with final counts
-    book.section_count = total_sections
-    book.word_count = parse_result.total_word_count
-    book.ingestion_status = IngestionStatus.COMPLETED
-    db.commit()
+            # Chunk the section text
+            log(f"[PIPELINE]     Chunking...")
+            chunks = chunk_section(parsed_sec.raw_text)
+            log(f"[PIPELINE]     {len(chunks)} chunks")
 
-    logger.info(
-        "Ingestion complete for book '%s': %d sections, %d words",
-        book.title, total_sections, parse_result.total_word_count,
-    )
+            for ci, chunk_result in enumerate(chunks):
+                log(f"[PIPELINE]       Embedding chunk {ci+1}/{len(chunks)} ({chunk_result.word_count} words)...")
+                chunk_embedding = await embed_text(chunk_result.content)
+                db.add(Chunk(
+                    section_id=section.id,
+                    chunk_index=chunk_result.chunk_index,
+                    content=chunk_result.content,
+                    embedding=chunk_embedding,
+                ))
+
+            # Checkpoint
+            if idx > 0 and idx % 5 == 0:
+                db.commit()
+                log(f"[PIPELINE]     CHECKPOINT: committed up to section {idx+1}")
+
+        log("[PIPELINE] Step 4 OK: All sections processed")
+    except Exception as e:
+        log(f"[PIPELINE] Step 4 FAILED at section {idx+1}: {e}")
+        raise
+
+    # ── STEP 5: Finalise book ─────────────────────────────────
+    log("[PIPELINE] Step 5/5: Finalising book...")
+    try:
+        book.section_count = total_sections
+        book.word_count = parse_result.total_word_count
+        book.ingestion_status = IngestionStatus.COMPLETED
+        db.commit()
+        log(f"[PIPELINE] Step 5 OK: Book COMPLETED — {total_sections} sections, {parse_result.total_word_count} words")
+    except Exception as e:
+        log(f"[PIPELINE] Step 5 FAILED: {e}")
+        raise

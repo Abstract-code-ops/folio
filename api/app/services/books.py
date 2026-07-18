@@ -30,6 +30,7 @@ class BookResponse(BaseModel):
     author: str
     description: Optional[str] = None
     cover_image_url: Optional[str] = None
+    storage_url: str
     ingestion_status: IngestionStatus
     section_count: Optional[int] = None
     word_count: Optional[int] = None
@@ -116,6 +117,40 @@ async def get_books_by_status(
 ) -> BookListResponse:
     """Convenience wrapper — filter books by a single ingestion status."""
     return await list_books(db, status=status, limit=limit, offset=offset)
+
+
+async def create_book(
+    db: AsyncSession,
+    *,
+    title: str,
+    author: str,
+    storage_url: str,
+    description: Optional[str] = None,
+    cover_image_url: Optional[str] = None,
+) -> BookResponse:
+    """Create a new book record in the library.
+
+    Books are shared global resources created once and shared across
+    all users. The ingestion pipeline runs separately via
+    :func:`trigger_ingestion`.
+
+    Returns:
+        ``BookResponse`` for the newly created book.
+    """
+    from app.models.book import Book, IngestionStatus  # noqa: F811
+
+    book = Book(
+        title=title,
+        author=author,
+        storage_url=storage_url,
+        description=description,
+        cover_image_url=cover_image_url,
+        ingestion_status=IngestionStatus.NOT_STARTED,
+    )
+    db.add(book)
+    await db.commit()
+    await db.refresh(book)
+    return BookResponse.model_validate(book)
 
 
 async def trigger_ingestion(

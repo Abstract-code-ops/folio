@@ -25,10 +25,5 @@ async def get_book_coverage(
     user_id: uuid.UUID = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ) -> CoverageMapResponse:
-    """Return the full coverage map for *book_id*, scoped to the current user.
-
-    Every section of the book is returned with its aggregated coverage
-    score and derived visual state (uncovered / mentioned / partial /
-    well_covered). Sections with no events have score 0 / uncovered.
-    """
+    """Return the full coverage map for *book_id*."""
     return await get_coverage_map(db, user_id, book_id)

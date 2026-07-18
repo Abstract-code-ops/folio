@@ -12,6 +12,7 @@ export interface BookResponse {
   author: string;
   description: string | null;
   cover_image_url: string | null;
+  storage_url: string;
   ingestion_status: IngestionStatus;
   section_count: number | null;
   word_count: number | null;

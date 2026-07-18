@@ -73,6 +73,7 @@ class CoverageEvent(Base):
         SAEnum(
             EventType,
             name="event_type",
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         nullable=False,
         index=True,

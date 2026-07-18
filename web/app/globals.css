@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Nunito + Lora ──────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Lora:wght@400;500;600;700&display=swap');
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply bg-bg-base text-text-primary font-body;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-bg-base text-text-primary font-body text-body;
+    line-height: 1.6;
+  }
+
+  /* ── Typography scale ─────────────────────────────── */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading leading-tight text-text-primary;
+  }
+
+  h1 { @apply text-h1; }
+  h2 { @apply text-h2; }
+  h3 { @apply text-h3; }
+  h4 { @apply text-h4; }
+  h5 { @apply text-h5; }
+  h6 { @apply text-h6; }
+
+  p, li { @apply text-body text-text-primary max-w-prose; }
+
+  /* ── Reader surface ───────────────────────────────── */
+  .reader-text {
+    @apply font-body text-body-lg leading-relaxed tracking-wide;
+  }
+
+  /* ── Coverage color animation ─────────────────────── */
+  .coverage-transition {
+    transition: background-color 300ms ease-out, opacity 300ms ease-out;
+  }
+
+  /* ── Panel transitions ────────────────────────────── */
+  .panel-slide {
+    transition: width 200ms ease-in-out, opacity 200ms ease-in-out;
+  }
+
+  /* ── Reduced motion ───────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    .coverage-transition,
+    .panel-slide {
+      transition: none;
+    }
+  }
+
+  /* ── Scrollbar ────────────────────────────────────── */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #252528;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #353538;
+  }
+}

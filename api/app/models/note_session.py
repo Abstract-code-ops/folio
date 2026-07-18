@@ -71,6 +71,7 @@ class NoteSession(TimestampMixin, Base):
         SAEnum(
             NoteSource,
             name="note_source",
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         nullable=False,
     )
@@ -88,6 +89,7 @@ class NoteSession(TimestampMixin, Base):
         SAEnum(
             NoteSessionStatus,
             name="note_session_status",
+            values_callable=lambda obj: [e.value for e in obj],
         ),
         default=NoteSessionStatus.PENDING,
         nullable=False,

@@ -7,6 +7,11 @@ export type NoteSessionStatus =
   | "completed"
   | "failed";
 
+export interface NoteSessionListResponse {
+  sessions: NoteSessionResponse[];
+  total: number;
+}
+
 export interface NoteSessionResponse {
   id: string;
   book_id: string;

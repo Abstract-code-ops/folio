@@ -16,6 +16,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.note_session import NoteSession, NoteSessionStatus, NoteSource
@@ -37,6 +38,12 @@ class NoteSessionResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class NoteSessionListResponse(BaseModel):
+    """List of note sessions returned to the client."""
+    sessions: list[NoteSessionResponse]
+    total: int
 
 
 # ── Service functions ──────────────────────────────────────────
@@ -92,4 +99,41 @@ async def create_note_session(
         matched_section_count=session.matched_section_count,
         job_id=job.message_id,
         created_at=session.created_at,
+    )
+
+
+async def list_note_sessions(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    book_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+) -> NoteSessionListResponse:
+    """List note sessions for a user + book, most recent first."""
+    result = await db.execute(
+        select(NoteSession)
+        .where(
+            NoteSession.user_id == user_id,
+            NoteSession.book_id == book_id,
+        )
+        .order_by(NoteSession.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    sessions = result.scalars().all()
+
+    # Count total
+    count_result = await db.execute(
+        select(NoteSession)
+        .where(
+            NoteSession.user_id == user_id,
+            NoteSession.book_id == book_id,
+        )
+    )
+    total = len(count_result.scalars().all())
+
+    return NoteSessionListResponse(
+        sessions=[NoteSessionResponse.model_validate(s) for s in sessions],
+        total=total,
     )
