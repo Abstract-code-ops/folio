@@ -3,36 +3,22 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   Send,
-  Loader2,
   MessageSquare,
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
+import { Loader } from "@/components/ui/loader";
 import type { QaEvent } from "@/types/chat";
+import { useChatStore, type ChatMessage, type Citation } from "@/lib/chat-store";
 
-// ── Message types ────────────────────────────────────────────
+// Keep this many recent messages visible; summarize anything older.
+const RECENT_KEEP = 6;
+// Trigger summarization once the thread grows past this many messages.
+const MAX_VISIBLE = RECENT_KEEP + 4;
 
-interface UserMessage {
-  role: "user";
-  text: string;
-}
-
-interface AiMessage {
-  role: "ai";
-  text: string;
-  citations: Citation[];
-  notCovered: string | null;
-}
-
-interface Citation {
-  sectionHeading: string;
-  pageStart: number | null;
-  pageEnd: number | null;
-  excerpt: string;
-}
-
-type Message = UserMessage | AiMessage;
+// Stable empty reference so the messages selector doesn't churn on every render
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
 // ── Component ────────────────────────────────────────────────
 
@@ -44,7 +30,8 @@ export interface ChatPanelProps {
 }
 
 export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const messages = useChatStore((s) => s.chats[bookId]?.messages ?? EMPTY_MESSAGES);
+  const summary = useChatStore((s) => s.chats[bookId]?.summary ?? null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,33 +43,67 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Fold the oldest messages (beyond the recent window) into the summary,
+  // leaving the recent messages intact.
+  const rollUpIfNeeded = useCallback(async () => {
+    const store = useChatStore.getState();
+    const chat = store.getChat(bookId);
+    if (chat.messages.length <= MAX_VISIBLE) return;
+
+    const overflow = chat.messages.length - RECENT_KEEP;
+    const toSummarize = chat.messages.slice(0, overflow);
+
+    const transcript: { role: string; content: string }[] = [];
+    if (chat.summary) {
+      transcript.push({ role: "user", content: `[Earlier conversation]\n${chat.summary}` });
+    }
+    for (const m of toSummarize) {
+      if (m.text.trim()) transcript.push({ role: m.role, content: m.text });
+    }
+
+    try {
+      const newSummary = await apiClient.summarizeConversation(transcript);
+      if (newSummary) {
+        store.setSummary(bookId, newSummary);
+        store.dropOldest(bookId, overflow);
+      }
+    } catch {
+      // Summarization is best-effort — keep the messages if it fails.
+    }
+  }, [bookId]);
+
   const sendQuestion = useCallback(async () => {
     const q = input.trim();
     if (!q || streaming) return;
     setInput("");
     setError(null);
 
-    // Add user message
-    const userMsg: UserMessage = { role: "user", text: q };
-    setMessages((prev) => [...prev, userMsg]);
+    const store = useChatStore.getState();
+    const chat = store.getChat(bookId);
 
-    // Add placeholder AI message
-    const aiMsg: AiMessage = {
+    // Conversation history (summary + recent messages) before this turn.
+    const history: { role: string; content: string }[] = [];
+    for (const m of chat.messages) {
+      if (m.text.trim()) history.push({ role: m.role, content: m.text });
+    }
+
+    store.addMessage(bookId, { role: "user", text: q });
+    store.addMessage(bookId, {
       role: "ai",
       text: "",
       citations: [],
       notCovered: null,
-    };
-    setMessages((prev) => [...prev, aiMsg]);
+    });
     setStreaming(true);
 
     let currentCitations: Citation[] = [];
-    let currentText = "";
 
     try {
-      const stream = await apiClient.askQuestion(bookId, q);
+      const stream = await apiClient.askQuestion(bookId, q, {
+        summary: chat.summary ?? undefined,
+        history,
+      });
       const reader = stream.getReader();
-      const decoder = new TextDecoder();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -92,15 +113,7 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
 
         switch (event.type) {
           case "token":
-            currentText += event.text;
-            setMessages((prev) => {
-              const copy = [...prev];
-              const last = copy[copy.length - 1];
-              if (last?.role === "ai") {
-                (last as AiMessage).text = currentText;
-              }
-              return copy;
-            });
+            useChatStore.getState().appendToken(bookId, event.text);
             break;
 
           case "citation":
@@ -110,25 +123,11 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
               pageEnd: event.page_end,
               excerpt: event.excerpt,
             });
-            setMessages((prev) => {
-              const copy = [...prev];
-              const last = copy[copy.length - 1];
-              if (last?.role === "ai") {
-                (last as AiMessage).citations = [...currentCitations];
-              }
-              return copy;
-            });
+            useChatStore.getState().setCitations(bookId, [...currentCitations]);
             break;
 
           case "not_covered":
-            setMessages((prev) => {
-              const copy = [...prev];
-              const last = copy[copy.length - 1];
-              if (last?.role === "ai") {
-                (last as AiMessage).notCovered = event.text;
-              }
-              return copy;
-            });
+            useChatStore.getState().setNotCovered(bookId, event.text);
             break;
 
           case "error":
@@ -136,19 +135,17 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
             break;
 
           case "done":
-            // Streaming complete — no action needed
             break;
         }
       }
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to get answer",
-      );
+      setError(err instanceof Error ? err.message : "Failed to get answer");
     } finally {
       setStreaming(false);
       inputRef.current?.focus();
+      await rollUpIfNeeded();
     }
-  }, [input, streaming, bookId]);
+  }, [input, streaming, bookId, rollUpIfNeeded]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -172,7 +169,7 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
   return (
     <div className={cn("flex flex-col h-full", className)}>
       {/* Empty state */}
-      {messages.length === 0 && !error && (
+      {messages.length === 0 && !summary && !error && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
           <MessageSquare className="h-8 w-8 text-text-subtle mb-3" />
           <p className="text-body text-text-muted mb-1">
@@ -185,8 +182,14 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
       )}
 
       {/* Message thread */}
-      {messages.length > 0 && (
+      {(messages.length > 0 || summary) && (
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+          {summary && (
+            <div className="rounded-lg bg-bg-elevated border border-border-subtle px-3 py-2">
+              <p className="text-body-sm text-text-subtle mb-0.5">Earlier in this chat</p>
+              <p className="text-body-sm text-text-muted">{summary}</p>
+            </div>
+          )}
           {messages.map((msg, i) => (
             <div
               key={i}
@@ -249,7 +252,7 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
           {streaming && (
             <div className="flex justify-start">
               <div className="bg-bg-elevated rounded-lg rounded-bl-sm px-3 py-2">
-                <Loader2 className="h-4 w-4 text-text-muted animate-spin" />
+                <Loader variant="dots" />
               </div>
             </div>
           )}

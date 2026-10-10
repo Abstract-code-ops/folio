@@ -13,7 +13,7 @@ need to be passed explicitly here.
 from __future__ import annotations
 
 import litellm
-from litellm import aembedding, embedding
+from litellm import acompletion, aembedding, embedding
 
 from app.core.config import settings
 
@@ -38,6 +38,37 @@ EMBEDDING_DIMENSION: int = settings.litellm_embedding_dimension
 METADATA_MODEL: str = settings.cerebras_metadata_model
 NOTE_GEN_MODEL: str = settings.litellm_note_gen_model
 QA_MODEL: str = settings.litellm_qa_model
+
+# ── VoidAI (OpenAI-compatible generation provider) ────────────
+
+VOID_MODEL: str = settings.void_model
+VOID_API_BASE: str = settings.void_api_base
+
+
+async def void_acompletion(
+    messages: list[dict[str, str]],
+    *,
+    model: str | None = None,
+    stream: bool = False,
+    temperature: float = 0.2,
+    **kwargs,
+):
+    """Call VoidAI (OpenAI-compatible) via LiteLLM's OpenAI provider.
+
+    Routes ``openai/<model>`` through ``VOID_API_BASE`` using
+    ``VOID_API_KEY``. Returns the completion, or an async stream iterator
+    when ``stream=True``.
+    """
+    model = model or VOID_MODEL
+    return await acompletion(
+        model=f"openai/{model}",
+        messages=messages,
+        api_base=VOID_API_BASE,
+        api_key=os.environ.get("VOID_API_KEY", ""),
+        stream=stream,
+        temperature=temperature,
+        **kwargs,
+    )
 
 
 async def embed_text(text: str, model: str | None = None) -> list[float]:

@@ -6,12 +6,12 @@ import {
   Plus,
   ChevronDown,
   ChevronRight,
-  Loader2,
   Sparkles,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
+import { Loader } from "@/components/ui/loader";
 import type {
   NoteSessionResponse,
   NoteSessionListResponse,
@@ -151,7 +151,7 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-5 w-5 text-text-muted animate-spin" />
+            <Loader />
           </div>
         ) : error ? (
           <div className="px-4 py-8 text-center">
@@ -305,7 +305,7 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
                     className="px-3 py-1.5 rounded-md bg-accent text-white text-body-sm hover:bg-accent-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     {submitting ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader variant="dots" />
                     ) : (
                       "Submit"
                     )}
@@ -362,7 +362,7 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
                   >
                     {generating ? (
                       <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader variant="dots" />
                         Generating…
                       </>
                     ) : (

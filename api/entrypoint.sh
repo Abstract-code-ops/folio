@@ -5,9 +5,6 @@
 
 set -e
 
-# Upgrade tenacity if needed (compat with Python 3.12 for dramatiq-pg)
-pip install --upgrade tenacity -q 2>/dev/null || true
-
 # Start Ollama server in background
 ollama serve &
 OLLAMA_PID=$!

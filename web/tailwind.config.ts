@@ -30,46 +30,68 @@ const config: Config = {
 
       /* ── 60/30/10 Color Palette (dark only) ─────────── */
       colors: {
-        /* 60% — Backgrounds & surfaces */
+        /* 60% — Backgrounds & surfaces (theme-aware) */
         bg: {
-          base: "#0E0E0F",
-          surface: "#161618",
-          elevated: "#1E1E21",
-          reader: "#131314",
+          base: "rgb(var(--bg-base) / <alpha-value>)",
+          surface: "rgb(var(--bg-surface) / <alpha-value>)",
+          elevated: "rgb(var(--bg-elevated) / <alpha-value>)",
+          reader: "rgb(var(--bg-reader) / <alpha-value>)",
         },
 
-        /* 30% — Text & primary accent */
+        /* 30% — Text & primary accent (theme-aware) */
         text: {
-          primary: "#F0EEE9",
-          muted: "#9C9BA0",
-          subtle: "#6B6A6F",
+          primary: "rgb(var(--text-primary) / <alpha-value>)",
+          muted: "rgb(var(--text-muted) / <alpha-value>)",
+          subtle: "rgb(var(--text-subtle) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#7C5CFC",
-          hover: "#8E74FF",
-          light: "#A99BFF",
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          hover: "rgb(var(--accent-hover) / <alpha-value>)",
+          light: "rgb(var(--accent-light) / <alpha-value>)",
         },
 
-        /* 10% — Coverage (amber→green ramp, exclusive use) */
+        /* Book-spine tints (decorative, constant across themes) */
+        cover: {
+          1: "rgb(var(--cover-1) / <alpha-value>)",
+          2: "rgb(var(--cover-2) / <alpha-value>)",
+          3: "rgb(var(--cover-3) / <alpha-value>)",
+          4: "rgb(var(--cover-4) / <alpha-value>)",
+        },
+
+        /* Shelf spine cloth palette (constant across themes) */
+        spine: {
+          1: "rgb(var(--spine-1) / <alpha-value>)",
+          2: "rgb(var(--spine-2) / <alpha-value>)",
+          3: "rgb(var(--spine-3) / <alpha-value>)",
+          4: "rgb(var(--spine-4) / <alpha-value>)",
+          5: "rgb(var(--spine-5) / <alpha-value>)",
+          6: "rgb(var(--spine-6) / <alpha-value>)",
+          7: "rgb(var(--spine-7) / <alpha-value>)",
+          8: "rgb(var(--spine-8) / <alpha-value>)",
+          ink: "rgb(var(--spine-ink) / <alpha-value>)",
+          paper: "rgb(var(--spine-paper) / <alpha-value>)",
+        },
+
+        /* 10% — Coverage (amber→green ramp, constant across themes) */
         coverage: {
-          none: "#252528",
-          low: "#92400E",
-          mid: "#D97706",
-          high: "#4ADE80",
-          connective: "#1E1E21",
+          none: "rgb(var(--coverage-none) / <alpha-value>)",
+          low: "rgb(var(--coverage-low) / <alpha-value>)",
+          mid: "rgb(var(--coverage-mid) / <alpha-value>)",
+          high: "rgb(var(--coverage-high) / <alpha-value>)",
+          connective: "rgb(var(--coverage-connective) / <alpha-value>)",
         },
 
-        /* 10% — Semantic states */
+        /* 10% — Semantic states (constant) */
         state: {
-          error: "#E05252",
-          success: "#4ADE80",
-          warning: "#F59E0B",
+          error: "rgb(var(--state-error) / <alpha-value>)",
+          success: "rgb(var(--state-success) / <alpha-value>)",
+          warning: "rgb(var(--state-warning) / <alpha-value>)",
         },
 
-        /* Borders */
+        /* Borders (theme-aware) */
         border: {
-          DEFAULT: "#252528",
-          subtle: "#1C1C1F",
+          DEFAULT: "rgb(var(--border-default) / <alpha-value>)",
+          subtle: "rgb(var(--border-subtle) / <alpha-value>)",
         },
       },
 

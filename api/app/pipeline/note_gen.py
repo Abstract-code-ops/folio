@@ -17,11 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from litellm import acompletion
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
-from app.core.litellm import NOTE_GEN_MODEL
+from app.core.litellm import NOTE_GEN_MODEL, void_acompletion
 
 # ── Output schemas ─────────────────────────────────────────────
 
@@ -129,7 +128,7 @@ async def generate_section_notes(
     model = model or NOTE_GEN_MODEL
     user_prompt = _build_user_prompt(heading, raw_text, metadata)
 
-    response = await acompletion(
+    response = await void_acompletion(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},

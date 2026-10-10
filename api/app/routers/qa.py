@@ -16,28 +16,21 @@ import logging
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.orm import joinedload
 
 from app.core.auth import get_current_user
 from app.core.db import AsyncSessionLocal
-from app.core.litellm import embed_text
-from app.models.chunk import Chunk
 from app.models.coverage_event import CoverageEvent, EventType
 from app.models.qa_message import QAMessage
-from app.models.section import Section
-from app.pipeline.qa_chain import answer_question_stream, build_context
-from app.pipeline.similarity import cosine_similarity
+from app.pipeline.qa_chain import answer_question_stream, build_context, summarize_conversation
+from app.services.qa import build_citations, retrieve_top_chunks
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/qa", tags=["qa"])
 
-# Number of top chunks to retrieve across all sections
-TOP_K_CHUNKS = 5
 
 
 # ── Request schemas ────────────────────────────────────────────
@@ -47,9 +40,26 @@ class AskQuestionRequest(BaseModel):
     """Request body for ``POST /qa/{book_id}``."""
 
     question: str
+    summary: str | None = None
+    history: list[dict[str, str]] = []
+
+
+class SummarizeRequest(BaseModel):
+    """Request body for ``POST /qa/summarize``."""
+
+    messages: list[dict[str, str]]
 
 
 # ── Endpoints ──────────────────────────────────────────────────
+
+
+@router.post("/summarize")
+async def summarize(body: SummarizeRequest) -> dict[str, str]:
+    """Summarize a chat transcript into a short running summary via VoidAI."""
+    if not body.messages:
+        return {"summary": ""}
+    summary = await summarize_conversation(body.messages)
+    return {"summary": summary}
 
 
 @router.post("/{book_id}")
@@ -72,7 +82,7 @@ async def ask_question(
     - ``done`` — end of stream marker with ``qa_message_id``
     """
     return StreamingResponse(
-        _qa_stream(user_id, book_id, body.question),
+        _qa_stream(user_id, book_id, body.question, body.summary, body.history),
         media_type="application/x-ndjson",
         headers={
             "X-Accel-Buffering": "no",
@@ -88,75 +98,50 @@ async def _qa_stream(
     user_id: uuid.UUID,
     book_id: uuid.UUID,
     question: str,
+    summary: str | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    """Async generator: retrieve all chunks → embed → score → stream answer → persist."""
+    """Async generator: retrieve chunks via pgvector → stream answer → persist."""
     full_answer: str = ""
     source_citations: list[dict] = []
 
     async with AsyncSessionLocal() as db:
         try:
-            # 1. Fetch all chunks for the book (with their section info)
-            # TODO: Replace with a pgvector ORDER BY embedding <=> :query LIMIT :k
-            # query once the ingestion pipeline populates the embedding columns.
-            # Python-side cosine is a placeholder until pgvector indices exist.
-            chunk_result = await db.execute(
-                select(Chunk)
-                .join(Section, Chunk.section_id == Section.id)
-                .where(
-                    Section.book_id == book_id,
-                    Chunk.embedding.isnot(None),
-                )
-                .options(joinedload(Chunk.section))
-                .order_by(Section.chapter_index, Section.section_index, Chunk.chunk_index)
-            )
-            all_chunks = chunk_result.unique().scalars().all()
+            # 1. Retrieve top-k chunks via pgvector cosine distance
+            top_chunks = await retrieve_top_chunks(db, book_id, question)
 
-            if not all_chunks:
+            if not top_chunks:
                 yield json.dumps({
                     "type": "not_covered",
                     "text": "This book has no indexed content for Q&A.",
                 }).encode() + b"\n"
                 return
 
-            # 2. Embed the question
-            query_embedding = await embed_text(question)
+            # 2. Build grounding context from the retrieved chunks
+            context = build_context([(chunk, 0.0) for chunk in top_chunks])
 
-            # 3. Compute cosine similarity against ALL chunk embeddings
-            scored_chunks: list[tuple[Chunk, float]] = []
-            for chunk in all_chunks:
-                if chunk.embedding and len(chunk.embedding) > 0:
-                    score = cosine_similarity(query_embedding, chunk.embedding)
-                    scored_chunks.append((chunk, score))
+            # 3. Build citation events (emitted after the answer streams)
+            citations = build_citations(top_chunks)
+            source_citations = list(citations)
 
-            if not scored_chunks:
-                yield json.dumps({
-                    "type": "not_covered",
-                    "text": "No relevant content found in this book.",
-                }).encode() + b"\n"
-                return
-
-            # 4. Sort descending by similarity, take top-k
-            scored_chunks.sort(key=lambda x: x[1], reverse=True)
-            top_chunks = scored_chunks[:TOP_K_CHUNKS]
-
-            # 5. Build grounding context (per-chunk section info baked in)
-            context = build_context(top_chunks)
-
-            # 6. Stream the answer via the pipeline
+            # 4. Stream the grounded answer as token events first
             async for event_bytes in answer_question_stream(
                 question=question,
                 context=context,
+                summary=summary,
+                history=history,
             ):
                 event = json.loads(event_bytes)
                 if event.get("type") == "token":
                     full_answer += event.get("text", "")
-                elif event.get("type") == "citation":
-                    source_citations.append(event)
                 yield event_bytes
 
-            # 7. After streaming completes, persist Q&A message
-            #    section_id = the section of the top-ranked chunk
-            top_section_id = top_chunks[0][0].section_id
+            # 5. Emit citation events after the answer has streamed
+            for citation in citations:
+                yield json.dumps(citation).encode() + b"\n"
+
+            # 6. Persist the Q&A message
+            top_section_id = top_chunks[0].section_id
 
             qa_message = QAMessage(
                 user_id=user_id,
@@ -168,9 +153,9 @@ async def _qa_stream(
             )
             db.add(qa_message)
 
-            # 8. Emit coverage events — one per contributing section
+            # 6. Emit coverage events — one per contributing section
             contributing_section_ids: set[uuid.UUID] = {
-                c[0].section_id for c in top_chunks
+                c.section_id for c in top_chunks
             }
             for sid in contributing_section_ids:
                 db.add(

@@ -2,56 +2,49 @@
 
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  Loader2,
-  Brain,
-  MessageSquare,
-  FileText,
-  Settings,
-  X,
-} from "lucide-react";
+import { Brain, MessageSquare, FileText } from "lucide-react";
 import dynamicImport from "next/dynamic";
-import { BrainMap } from "@/components/coverage/BrainMap";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
-import { cn } from "@/lib/utils";
+import { Loader } from "@/components/ui/loader";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { apiClient } from "@/lib/api-client";
+import { useChatStore } from "@/lib/chat-store";
 import type { BookResponse } from "@/types/books";
-import type { SectionCoverage } from "@/types/coverage";
 
 const PdfViewer = dynamicImport(
   () => import("@/components/reader/PdfViewer").then((m) => m.PdfViewer),
   { ssr: false },
 );
 
-// ── Tab config ────────────────────────────────────────────────
-
 type TabId = "coverage" | "chat" | "notes";
-
-const TABS: { id: TabId; icon: typeof Brain; label: string }[] = [
+const ALL_TABS: { id: TabId; icon: typeof Brain; label: string }[] = [
   { id: "coverage", icon: Brain, label: "Coverage" },
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "notes", icon: FileText, label: "Notes" },
 ];
 
-// ── Coverage skeleton (shown while coverage map loads) ─────────
+// ── Coverage — coming soon ───────────────────────────────────
 
-function CoverageSkeleton() {
+function ComingSoon() {
   return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between mb-4">
-        <div className="h-4 w-20 rounded bg-bg-elevated animate-pulse" />
-        <div className="h-3 w-28 rounded bg-bg-elevated animate-pulse" />
-      </div>
-      <div className="flex items-center gap-3 mb-6">
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="h-3 w-16 rounded bg-bg-elevated animate-pulse" />
-        ))}
-      </div>
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 text-text-muted animate-spin" />
-      </div>
+    <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+      <Brain className="h-8 w-8 text-text-subtle mb-3" />
+      <p className="text-body font-heading text-text-primary mb-1">Coverage map</p>
+      <p className="text-body-sm text-text-muted">Coming soon</p>
     </div>
   );
 }
@@ -60,36 +53,20 @@ function CoverageSkeleton() {
 
 function PanelContent({
   activeTab,
-  sections,
   bookId,
   onNavigateToPage,
 }: {
   activeTab: TabId;
-  sections: SectionCoverage[];
   bookId: string;
   onNavigateToPage: (page: number) => void;
 }) {
-  switch (activeTab) {
-    case "coverage":
-      return (
-        <BrainMap
-          sections={sections}
-          onChapterClick={(chapter) => {
-            // Navigate to the first section's page (approximate)
-            const firstSection = sections.find((s) =>
-              chapter.sectionIds.includes(s.id),
-            );
-            if (firstSection) onNavigateToPage(firstSection.page_start);
-          }}
-        />
-      );
-    case "chat":
-      return (
-        <ChatPanel bookId={bookId} onNavigateToPage={onNavigateToPage} />
-      );
-    case "notes":
-      return <NotesPanel bookId={bookId} />;
+  if (activeTab === "coverage") {
+    return <ComingSoon />;
   }
+  if (activeTab === "chat") {
+    return <ChatPanel bookId={bookId} onNavigateToPage={onNavigateToPage} />;
+  }
+  return <NotesPanel bookId={bookId} />;
 }
 
 // ── Inner component ───────────────────────────────────────────
@@ -97,67 +74,36 @@ function PanelContent({
 function ReaderContent() {
   const searchParams = useSearchParams();
   const bookId = searchParams.get("id") ?? "";
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const [book, setBook] = useState<BookResponse | null>(null);
   const [bookLoading, setBookLoading] = useState(true);
-  const [sections, setSections] = useState<SectionCoverage[]>([]);
-  const [coverageLoading, setCoverageLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [activeTab, setActiveTab] = useState<TabId>("coverage");
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [mobileSurface, setMobileSurface] = useState<TabId | null>(null);
-
-  // Breakpoints
-  const isDesktop = useMediaQuery("(min-width: 1280px)");
-  const isLaptop = useMediaQuery("(min-width: 1024px) and (max-width: 1279px)");
-  const isTablet = useMediaQuery("(min-width: 640px) and (max-width: 1023px)");
-  const isMobile = useMediaQuery("(max-width: 639px)");
+  const [activeTab, setActiveTab] = useState<TabId>("coverage");
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
   useEffect(() => {
     if (!bookId) {
       setBookLoading(false);
-      setCoverageLoading(false);
-      setError("No book selected. Go back to the library to pick a book.");
+      setError("No book selected.");
       return;
     }
-
     let cancelled = false;
+    apiClient.getBook(bookId, true)
+      .then((data) => { if (!cancelled) setBook(data); })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load book"); })
+      .finally(() => { if (!cancelled) setBookLoading(false); });
 
-    apiClient
-      .getBook(bookId, true)
-      .then((data) => {
-        if (!cancelled) setBook(data);
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setError(
-            err instanceof Error ? err.message : "Failed to load book",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setBookLoading(false);
-      });
+    return () => { cancelled = true; };
+  }, [bookId]);
 
-    apiClient
-      .getCoverageMap(bookId)
-      .then((data) => {
-        if (!cancelled) setSections(data.sections);
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setError(
-            err instanceof Error ? err.message : "Failed to load coverage",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setCoverageLoading(false);
-      });
-
+  // Clear this book's chat when leaving the reader (navigate away or switch
+  // books), so each book session starts fresh. Tab switches within the reader
+  // do not unmount, so the chat persists across them.
+  useEffect(() => {
     return () => {
-      cancelled = true;
+      useChatStore.getState().resetChat(bookId);
     };
   }, [bookId]);
 
@@ -165,281 +111,125 @@ function ReaderContent() {
     setCurrentPage(page);
   }, []);
 
-  // ── Mobile actions ──────────────────────────────────────────
-  const openMobileSurface = useCallback((tab: TabId) => {
-    setMobileSurface(tab);
-  }, []);
-
-  const closeMobileSurface = useCallback(() => {
-    setMobileSurface(null);
-  }, []);
-
-  // ── Tab toggle ──────────────────────────────────────────────
-  const handleTabToggle = useCallback(
-    (tab: TabId) => {
-      if (isMobile || isTablet) {
-        openMobileSurface(tab);
-      } else if (tab === activeTab) {
-        setLeftPanelOpen((p) => !p);
-      } else {
-        setActiveTab(tab);
-        setLeftPanelOpen(true);
-      }
-    },
-    [activeTab, isMobile, isTablet, openMobileSurface],
-  );
-
   // ── Error state ─────────────────────────────────────────────
   if (error || !bookId) {
     return (
       <div className="h-screen flex items-center justify-center bg-bg-base">
-        <div className="text-center max-w-sm">
-          <p className="text-body text-state-error mb-2">
-            {error ?? "No book selected."}
-          </p>
-          <a
-            href="/"
-            className="text-body-sm text-accent hover:text-accent-hover transition-colors"
-          >
-            ← Back to library
-          </a>
-        </div>
+        <p className="text-body text-state-error mb-2">{error}</p>
+        <a href="/library" className="text-body-sm text-accent">← Back to library</a>
       </div>
     );
   }
 
-  // ── Book loading (book metadata before PDF can show) ────────
+  // ── Loading state ───────────────────────────────────────────
   if (bookLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-bg-base">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-6 w-6 text-text-muted animate-spin" />
-          <p className="text-body-sm text-text-muted">Loading book…</p>
-        </div>
+        <Loader label="Loading book…" />
       </div>
     );
   }
 
-  // ── Book not found after loading ────────────────────────────
   if (!book) {
     return (
       <div className="h-screen flex items-center justify-center bg-bg-base">
         <p className="text-body text-state-error">Book not found</p>
+        <a href="/library" className="text-body-sm text-accent mt-2">← Back to library</a>
       </div>
     );
   }
 
-  // ── Mobile / Tablet layout ──────────────────────────────────
-  if (isMobile || isTablet) {
-    const Icon = TABS.find((t) => t.id === activeTab)?.icon ?? Brain;
+  // ── Desktop: tabs sit above the panel ───────────────────────
+  if (isDesktop) {
     return (
-      <div className="h-screen flex flex-col bg-bg-base overflow-hidden">
-        {/* Reader surface — always visible */}
-        <main className="flex-1 flex flex-col bg-bg-reader min-h-0">
-          <div className="flex items-center justify-between px-4 h-10 border-b border-border-subtle shrink-0">
-            <span className="text-body-sm text-text-muted truncate">
-              {book.title} — p. {currentPage}
-            </span>
-          </div>
-          <PdfViewer
-            url={book.storage_url}
-            pageNumber={currentPage}
-            onPageChange={setCurrentPage}
-          />
-        </main>
-
-        {/* Bottom navigation */}
-        <nav className="flex items-center justify-around h-14 bg-bg-surface border-t border-border-subtle shrink-0">
-          {TABS.map(({ id, icon: TabIcon, label }) => (
-            <button
-              key={id}
-              onClick={() => handleTabToggle(id)}
-              className={cn(
-                "flex flex-col items-center gap-0.5 px-4 py-1 rounded-md transition-colors min-h-[44px] min-w-[44px] justify-center",
-                activeTab === id && mobileSurface !== id
-                  ? "text-accent"
-                  : "text-text-subtle hover:text-text-muted",
-              )}
-            >
-              <TabIcon className="h-4 w-4" strokeWidth={1.5} />
-              <span className="text-body-sm">{label}</span>
-            </button>
-          ))}
-          <button
-            onClick={() => setRightPanelOpen((p) => !p)}
-            className="flex flex-col items-center gap-0.5 px-4 py-1 rounded-md text-text-subtle hover:text-text-muted transition-colors min-h-[44px] min-w-[44px] justify-center"
-          >
-            <Settings className="h-4 w-4" strokeWidth={1.5} />
-            <span className="text-body-sm">Info</span>
-          </button>
-        </nav>
-
-        {/* Mobile bottom sheet — slides up when a tab is active */}
-        {mobileSurface && (
-          <div className="absolute inset-0 z-50 flex flex-col bg-bg-surface">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
-              <span className="font-heading text-body-sm font-semibold text-text-primary">
-                {TABS.find((t) => t.id === mobileSurface)?.label}
-              </span>
-              <button
-                onClick={closeMobileSurface}
-                className="w-8 h-8 flex items-center justify-center rounded-md text-text-subtle hover:text-text-primary hover:bg-bg-elevated transition-colors"
-              >
-                <X className="h-4 w-4" strokeWidth={1.5} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <PanelContent
-                activeTab={mobileSurface}
-                sections={sections}
-                bookId={bookId}
-                onNavigateToPage={(page) => {
-                  handleNavigateToPage(page);
-                  closeMobileSurface();
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Right sidebar for book info on mobile/tablet */}
-        {rightPanelOpen && (
-          <div className="absolute inset-0 z-50 flex flex-col bg-bg-surface">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
-              <span className="font-heading text-body-sm font-semibold text-text-primary">
-                Book info
-              </span>
-              <button
-                onClick={() => setRightPanelOpen(false)}
-                className="w-8 h-8 flex items-center justify-center rounded-md text-text-subtle hover:text-text-primary hover:bg-bg-elevated transition-colors"
-              >
-                <X className="h-4 w-4" strokeWidth={1.5} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Title:</span> {book.title}
-              </p>
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Author:</span> {book.author}
-              </p>
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Sections:</span>{" "}
-                {book.section_count ?? "—"}
-              </p>
-              <p className="text-body-sm text-text-muted">
-                <span className="text-text-subtle">Status:</span>{" "}
-                {book.ingestion_status}
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── Desktop / Laptop layout ─────────────────────────────────
-  return (
-    <div className="h-screen flex bg-bg-base overflow-hidden">
-      {/* Icon rail */}
-      <nav className="w-rail flex flex-col items-center py-3 gap-2 bg-bg-surface border-r border-border-subtle shrink-0">
-        <div className="mb-4 mt-1">
-          <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
-            <span className="text-white font-heading text-body-sm font-bold">
-              F
-            </span>
-          </div>
+      <div className="h-screen flex flex-col bg-bg-base">
+        {/* Top bar — breadcrumb */}
+        <div className="flex items-center gap-3 px-4 h-12 border-b border-border-subtle bg-bg-surface shrink-0">
+          <a href="/library" className="text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+            ← Library
+          </a>
+          <span className="text-text-subtle">/</span>
+          <span className="font-heading text-body-sm font-semibold text-text-primary truncate">
+            {book.title}
+          </span>
         </div>
-        {TABS.map(({ id, icon: TabIcon, label }) => (
-          <button
-            key={id}
-            onClick={() => handleTabToggle(id)}
-            title={label}
-            className={cn(
-              "w-9 h-9 rounded-lg flex items-center justify-center transition-colors",
-              activeTab === id && (leftPanelOpen || isLaptop)
-                ? "bg-accent/15 text-accent"
-                : "text-text-subtle hover:text-text-muted hover:bg-bg-elevated",
-            )}
+
+        {/* Left panel (tabs on top) + PDF — resizable */}
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="flex-1 min-h-0"
+        >
+          {/* Tabs + panel content */}
+          <ResizablePanel
+            defaultSize={22}
+            minSize={15}
+            maxSize={50}
+            className="bg-bg-surface"
           >
-            <TabIcon className="h-4 w-4" strokeWidth={1.5} />
-          </button>
-        ))}
-        <div className="flex-1" />
-        <button
-          onClick={() => setRightPanelOpen((p) => !p)}
-          title="Settings"
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-text-subtle hover:text-text-muted hover:bg-bg-elevated transition-colors"
-        >
-          <Settings className="h-4 w-4" strokeWidth={1.5} />
-        </button>
-      </nav>
-
-      {/* Left panel — coverage skeleton while loading, content when ready */}
-      {leftPanelOpen && isLaptop && (
-        <div
-          className="absolute inset-0 z-40 flex"
-          style={{ left: "48px" }}
-        >
-          <div
-            className="flex-1 bg-black/40"
-            onClick={() => setLeftPanelOpen(false)}
-          />
-          <aside className="w-panel bg-bg-surface border-r border-border-subtle overflow-y-auto shrink-0">
-            {coverageLoading ? (
-              <CoverageSkeleton />
-            ) : (
-              <PanelContent
-                activeTab={activeTab}
-                sections={sections}
-                bookId={bookId}
-                onNavigateToPage={handleNavigateToPage}
-              />
-            )}
-          </aside>
-        </div>
-      )}
-
-      {/* Left panel — on desktop it's side-by-side */}
-      {isDesktop && (
-        <aside
-          className={cn(
-            "panel-slide bg-bg-surface border-r border-border-subtle overflow-hidden shrink-0",
-            leftPanelOpen ? "w-panel opacity-100" : "w-0 opacity-0",
-          )}
-        >
-          {leftPanelOpen && (
-            <div className="w-panel h-full overflow-y-auto">
-              {coverageLoading ? (
-                <CoverageSkeleton />
-              ) : (
+            <div className="flex h-full min-h-0 flex-col">
+              <Tabs
+                value={activeTab}
+                onValueChange={(v) => setActiveTab(v as TabId)}
+                className="shrink-0 px-3 py-2 border-b border-border-subtle"
+              >
+                <TabsList className="w-full bg-bg-elevated border border-border">
+                  {ALL_TABS.map(({ id, icon: Icon, label }) => (
+                    <TabsTrigger
+                      key={id}
+                      value={id}
+                      className="flex-1 data-[state=active]:bg-bg-surface data-[state=active]:text-text-primary text-text-muted text-body-sm"
+                    >
+                      <Icon className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.5} />
+                      {label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 <PanelContent
                   activeTab={activeTab}
-                  sections={sections}
                   bookId={bookId}
                   onNavigateToPage={handleNavigateToPage}
                 />
-              )}
+              </div>
             </div>
-          )}
-        </aside>
-      )}
+          </ResizablePanel>
 
-      {/* PDF Reader */}
-      <main
-        className={cn(
-          "flex-1 bg-bg-reader flex flex-col",
-          isDesktop ? "min-w-[600px]" : "min-w-0",
-        )}
-      >
-        <div className="flex items-center justify-between px-4 h-10 border-b border-border-subtle shrink-0">
-          <span className="text-body-sm text-text-muted truncate">
-            {book.title} — p. {currentPage}
-          </span>
-          <span className="text-body-sm text-text-subtle shrink-0">
-            {sections.length} sections
-          </span>
-        </div>
+          <ResizableHandle
+            withHandle
+            className="bg-border-subtle hover:bg-accent/40 transition-colors data-[resize-handle-state=drag]:bg-accent"
+          />
+
+          {/* PDF Viewer */}
+          <ResizablePanel defaultSize={78} minSize={50}>
+            <main className="flex h-full flex-col bg-bg-reader min-w-0">
+              <PdfViewer
+                url={book.storage_url}
+                pageNumber={currentPage}
+                onPageChange={setCurrentPage}
+              />
+            </main>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    );
+  }
+
+  // ── Mobile / Tablet: bottom sheet layout ────────────────────
+  return (
+    <div className="h-dvh flex flex-col bg-bg-base">
+      {/* Top bar */}
+      <div className="flex items-center gap-2 px-4 h-10 border-b border-border-subtle bg-bg-surface shrink-0">
+        <a href="/library" className="text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+          ← Library
+        </a>
+        <span className="text-text-subtle">/</span>
+        <span className="text-body-sm text-text-muted truncate">{book.title}</span>
+        <span className="text-body-sm text-text-subtle ml-auto">p. {currentPage}</span>
+      </div>
+
+      {/* PDF Viewer */}
+      <main className="flex-1 flex flex-col bg-bg-reader min-h-0">
         <PdfViewer
           url={book.storage_url}
           pageNumber={currentPage}
@@ -447,37 +237,50 @@ function ReaderContent() {
         />
       </main>
 
-      {/* Right sidebar — desktop only */}
-      {isDesktop && (
-        <aside
-          className={cn(
-            "panel-slide bg-bg-surface border-l border-border-subtle overflow-hidden shrink-0",
-            rightPanelOpen ? "w-panel-right opacity-100" : "w-0 opacity-0",
-          )}
-        >
-          {rightPanelOpen && (
-            <div className="w-panel-right h-full overflow-y-auto p-4">
-              <h3 className="font-heading text-body-sm font-semibold text-text-primary mb-4">
-                Book info
-              </h3>
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Title:</span> {book.title}
-              </p>
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Author:</span> {book.author}
-              </p>
-              <p className="text-body-sm text-text-muted mb-2">
-                <span className="text-text-subtle">Sections:</span>{" "}
-                {book.section_count ?? "—"}
-              </p>
-              <p className="text-body-sm text-text-muted">
-                <span className="text-text-subtle">Status:</span>{" "}
-                {book.ingestion_status}
-              </p>
-            </div>
-          )}
-        </aside>
-      )}
+      {/* Bottom navigation — opens Sheet */}
+      <nav
+        className="flex items-center justify-around bg-bg-surface border-t border-border-subtle shrink-0"
+        style={{
+          height: "calc(3.5rem + env(safe-area-inset-bottom))",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+      >
+        {ALL_TABS.map(({ id, icon: Icon, label }) => (
+          <Sheet key={id} open={mobileSheetOpen && activeTab === id} onOpenChange={(open) => {
+            setMobileSheetOpen(open);
+            if (open) setActiveTab(id);
+          }}>
+            <SheetTrigger asChild>
+              <button
+                className="flex flex-col items-center gap-0.5 px-4 py-1 rounded-md transition-colors min-h-[44px] min-w-[44px] justify-center text-text-subtle hover:text-text-muted"
+              >
+                <Icon className="h-4 w-4" strokeWidth={1.5} />
+                <span className="text-body-sm">{label}</span>
+              </button>
+            </SheetTrigger>
+            <SheetContent
+              side="bottom"
+              className="bg-bg-surface border-t border-border-subtle text-text-primary h-[90vh] flex flex-col"
+            >
+              <SheetHeader className="shrink-0">
+                <SheetTitle className="text-text-primary font-heading text-body-sm font-semibold">
+                  {label}
+                </SheetTitle>
+              </SheetHeader>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <PanelContent
+                  activeTab={id}
+                  bookId={bookId}
+                  onNavigateToPage={(page) => {
+                    handleNavigateToPage(page);
+                    setMobileSheetOpen(false);
+                  }}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -491,7 +294,7 @@ export default function ReaderPage() {
     <Suspense
       fallback={
         <div className="h-screen flex items-center justify-center bg-bg-base">
-          <Loader2 className="h-6 w-6 text-text-muted animate-spin" />
+          <Loader />
         </div>
       }
     >

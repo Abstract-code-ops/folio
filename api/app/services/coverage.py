@@ -5,7 +5,7 @@ is involved. Every user interaction that touches a section emits an
 event row, and the score for a section is the sum of point values
 across all events for that (user_id, section_id) pair, capped at 15.
 
-Visual states (defined in ui-context.md):
+Visual states (defined in docs/ui-context.md):
   0     → uncovered
   1–4   → mentioned
   5–9   → partial
@@ -44,7 +44,7 @@ EVENT_POINT_MAP: dict[EventType, int] = {
 def coverage_state_from_score(score: int) -> str:
     """Map a numeric score to its named visual state.
 
-    See ui-context.md for the canonical state-to-visual mapping.
+    See docs/ui-context.md for the canonical state-to-visual mapping.
     """
     if score <= 0:
         return "uncovered"

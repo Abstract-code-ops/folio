@@ -5,10 +5,16 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libpq-dev gcc curl zstd tesseract-ocr \
     && curl -fsSL https://ollama.com/install.sh | sh \
+    && rm -rf /usr/local/lib/ollama/cuda_v12 \
+              /usr/local/lib/ollama/cuda_v13 \
+              /usr/local/lib/ollama/rocm \
+              /usr/local/lib/ollama/vulkan \
     && rm -rf /var/lib/apt/lists/*
 
-# Install tenacity separately (dramatiq-pg pins <6.0 but we need >=8 for async retry)
-RUN pip install --no-cache-dir "tenacity>=8.0.0"
+# dramatiq-pg pins tenacity<6, which conflicts with llama-index's tenacity>=8.2.
+# Install dramatiq-pg without its dependency constraints (dramatiq, tenacity,
+# sqlalchemy, psycopg2 are all pinned in requirements.txt).
+RUN pip install --no-cache-dir --no-deps dramatiq-pg==0.8.0
 
 # Install remaining Python deps
 COPY requirements.txt .

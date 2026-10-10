@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, JSON, MetaData, TypeDecorator, create_engine
+from sqlalchemy import DateTime, Float, JSON, MetaData, TypeDecorator, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -81,6 +81,15 @@ class Vector(TypeDecorator):
 
             return dialect.type_descriptor(PGVector(self.dim))
         return dialect.type_descriptor(JSON())
+
+    class comparator_factory(TypeDecorator.Comparator):
+        """Expose pgvector distance operators on the wrapped column."""
+
+        def cosine_distance(self, other):
+            return self.expr.op("<=>", return_type=Float)(other)
+
+        def l2_distance(self, other):
+            return self.expr.op("<->", return_type=Float)(other)
 
 
 # ── Common reusable column mixins ──────────────────────────────

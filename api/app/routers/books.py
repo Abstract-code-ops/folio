@@ -1,7 +1,7 @@
 """Book selection, ingestion status, and ingestion trigger route handlers.
 
 Browse endpoints are unauthenticated — library browsing does not
-require a user account (see project-overview.md). The ingestion
+require a user account (see docs/project-overview.md). The ingestion
 trigger endpoint is authenticated since it initiates background work.
 """
 

@@ -35,3 +35,7 @@ export interface QaErrorEvent {
   type: "error";
   text: string;
 }
+
+export interface SummarizeResponse {
+  summary: string;
+}

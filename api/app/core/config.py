@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # ── AI Providers (LiteLLM) ────────────────────────────────
     # Embedding → Nomic via local Ollama.
-    # Generation / Q&A / Metadata → Cerebras (or Gemini for metadata).
+    # Generation / Q&A → VoidAI (OpenAI-compatible). Metadata → Gemini.
     litellm_embedding_model: str = "ollama/nomic-embed-text"
     litellm_embedding_dimension: int = 768
     # Metadata extraction uses Gemini as primary, Cerebras as fallback.
@@ -39,8 +39,12 @@ class Settings(BaseSettings):
     litellm_metadata_model: str = "cerebras/gemma-4-31b"
     # General metadata model string (used by litellm.py METADATA_MODEL reference).
     # Note: metadata.py no longer reads this directly — see gemini_metadata_model / cerebras_metadata_model.
-    litellm_note_gen_model: str = "cerebras/gemma-4-31b"
-    litellm_qa_model: str = "cerebras/gemma-4-31b"
+    litellm_note_gen_model: str = "gpt-oss-20b"
+    litellm_qa_model: str = "gpt-oss-20b"
+
+    # ── VoidAI (OpenAI-compatible) — generation provider ──────
+    void_api_base: str = "https://api.voidai.app/v1"
+    void_model: str = "gpt-oss-20b"
 
     # ── Metadata extraction retry config ──────────────────────
     # Gemini retry: fixed backoff for RateLimitError.

@@ -4,9 +4,11 @@ __pycache__/
 *.pyc
 node_modules/
 .next/
+.reasonix/
 # Ignore all Markdown files
 *.md
 
-# But don't ignore README.md or dev-scripts.md
+# But don't ignore README.md, docs/dev-scripts.md or docs/session-log.md
 !README.md
-!dev-scripts.md
+!docs/dev-scripts.md
+!docs/session-log.md

@@ -8,7 +8,7 @@ import type {
   NoteSessionResponse,
   NoteSource,
 } from "@/types/notes";
-import type { QaEvent } from "@/types/chat";
+import type { QaEvent, SummarizeResponse } from "@/types/chat";
 
 // Use a relative proxy URL so the browser talks to Next.js (same origin),
 // which forwards to the FastAPI backend inside the Docker network.
@@ -60,12 +60,20 @@ class ApiClient {
   async askQuestion(
     bookId: string,
     question: string,
+    options?: {
+      summary?: string;
+      history?: { role: string; content: string }[];
+    },
   ): Promise<ReadableStream<QaEvent>> {
     const url = `${this.baseUrl}/qa/${bookId}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        summary: options?.summary,
+        history: options?.history ?? [],
+      }),
     });
     if (!res.ok) {
       throw new Error(`Failed to ask question: ${res.statusText}`);
@@ -117,6 +125,22 @@ class ApiClient {
   }
 
   // ── Notes ───────────────────────────────────────────────────
+
+  async summarizeConversation(
+    messages: { role: string; content: string }[],
+  ): Promise<string> {
+    const url = `${this.baseUrl}/qa/summarize`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to summarize conversation: ${res.statusText}`);
+    }
+    const data = (await res.json()) as SummarizeResponse;
+    return data.summary;
+  }
 
   async listNoteSessions(
     bookId: string,
