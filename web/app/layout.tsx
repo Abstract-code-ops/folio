@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { caveat } from "@/lib/fonts";
 
 export const metadata: Metadata = {
   title: "Folio — Book-first study platform",
@@ -21,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-bg-base antialiased">
+      <body className={`min-h-screen bg-bg-base antialiased ${caveat.variable}`}>
         <script
           dangerouslySetInnerHTML={{
             __html:

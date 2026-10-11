@@ -12,3 +12,4 @@ node_modules/
 !README.md
 !docs/dev-scripts.md
 !docs/session-log.md
+!web/content/founder-note.md

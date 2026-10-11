@@ -203,6 +203,15 @@
   }
 }
 
+/* ── Note section drop cap ──────────────────────────── */
+.drop-cap::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.85;
+  padding: 0.06em 0.14em 0 0;
+  font-weight: 600;
+}
+
 /* ── Spine cloth texture (subtle noise) ─────────────── */
 .spine-cloth {
   position: relative;
