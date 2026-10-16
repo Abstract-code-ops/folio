@@ -8,7 +8,7 @@ _Last updated: end of this session. Read this first next session._
 
 - **Frontend**: library + reader + coverage map + chat + notes all built and wired to the live API.
 - **PDF viewer**: switched to **EmbedPDF** (`@embedpdf/react-pdf-viewer`) — working, feature-rich (highlight, search, thumbnails, scroll, page count).
-- **Chat/Q&A**: fully built end-to-end but **currently broken** — the `/qa/{book_id}` endpoint returns a numpy error. **This needs fixing.**
+- **Chat/Q&A**: working end-to-end — VoidAI (`gpt-oss-20b`), pgvector `<=>` retrieval, Nomic/Ollama embeddings.
 - **Production build** still fails on a pre-existing **Sentry** issue (dev mode works).
 - **Auth** is temporarily disabled (anonymous user fallback).
 
@@ -196,9 +196,23 @@ Chat is wired end-to-end: ChatPanel → `apiClient.askQuestion()` → `POST /qa/
 
 ## 11. Handoff — latest session
 
-- **Chat is working**: VoidAI (`gpt-oss-20b`), real token streaming, pgvector `<=>` retrieval, Nomic/Ollama embeddings, per-book persistent chat with a rolling summary + conversation history fed into the prompt.
-- **Theme**: light + dark with a global toggle (default light). Tokens are CSS variables in `web/app/globals.css` (`:root` = light, `.dark` = dark).
-- **Routing**: `/` = landing page, `/library` = library, `/reader` = reader. The library moved from `/` to `/library`.
-- **Landing page**: static layout of all six sections done (Phase 2). The hero shelf is a first pass being rebuilt per `docs/hero-shelf.md`.
-- **Decisions**: accent is **ink blue** (was purple) — three tones, see `docs/ui-context.md`; `motion` (framer-motion) approved for the landing page only.
-- **To apply in code**: switch accent from purple to ink blue in `web/app/globals.css`, `web/tailwind.config.ts`, and `web/components/reader/PdfViewer.tsx` (`FOLIO_ACCENT`).
+**This session: landing page (hero shelf + personal note) — committed & pushed.**
+
+### Done
+- **Accent → ink blue**: `--accent*` tokens in `web/app/globals.css` (light + darker tone), `FOLIO_ACCENT` in `web/components/reader/PdfViewer.tsx`. No purple left.
+- **Hero shelf rebuilt**: a 3D book (Castiel-style — cover + striped page block + back cover, `rotateY(-29deg)`, `perspective: 600px`) + a pile of 5 mini 3D books on the left; books cycle pile→center with value-prop titles. Files: `web/components/landing/Shelf.tsx`, `Hero.tsx`, copy in `web/content/landing.ts`.
+- **Personal note section**: chaptered beats (problem/book/idea/hope) with a scroll-progress ribbon, drop cap, Rough Notation hand-drawn highlights on `==phrase==`, Caveat margin notes + signature, bookplate. Files: `web/components/landing/NoteSection.tsx`, `PersonalNote.tsx` (front-matter parser), `web/lib/fonts.ts` (Caveat), `web/content/founder-note.md` (front matter + Lorem Ipsum, name "sicheen"). Vignettes removed (looked weird).
+- **Deps added**: `rough-notation` (highlights); Caveat via `next/font`.
+- **Docs corrected**: Cerebras→VoidAI, embeddings→Nomic/Ollama across docs; deleted `docs/Fix.md` + `logs/errors.md`; memory `ai-provider-routing` updated.
+- **Committed + pushed**: `066206c` (hero/frontend/backend), `434fe66` (note section). `.gitignore` now tracks `web/content/founder-note.md`.
+
+### AI providers (authoritative)
+- Generation (note gen + Q&A): **VoidAI** `gpt-oss-20b` (OpenAI-compatible, `void_acompletion()`).
+- Embeddings: **Nomic via Ollama** (`nomic-embed-text`, 768-dim).
+- Metadata: **Gemini** (google-genai SDK).
+
+### Open / next
+- **Visual pass needed** (agent can't screenshot): hero + note section at 390/1280px, light+dark — highlight weight, drop cap, ribbon, margin-note position, 3D book angle.
+- **Cerebras code cleanup** (deferred): `api/app/core/config.py` (`cerebras_*` fields), `api/app/core/litellm.py` (`METADATA_MODEL`), `api/app/pipeline/metadata.py` docstring.
+- **founder-note.md**: still Lorem Ipsum + `==phrase==` markers — real copy pending.
+- Pre-existing: Sentry build fix, Better Auth, `NEXT_PUBLIC_API_URL` env override, worker OOM.

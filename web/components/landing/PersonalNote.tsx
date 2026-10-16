@@ -26,7 +26,7 @@ function extractSection(body: string, id: string): string {
 function splitHighlights(text: string): Segment[] {
   return text
     .split("==")
-    .map((t, i) => ({ text: t.trim(), highlight: i % 2 === 1 }))
+    .map((t, i) => ({ text: i % 2 === 1 ? t.trim() : t, highlight: i % 2 === 1 }))
     .filter((s) => s.text.length > 0);
 }
 
