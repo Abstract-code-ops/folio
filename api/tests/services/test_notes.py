@@ -7,13 +7,19 @@ The Dramatiq ``.send()`` call is mocked to avoid needing a real broker.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.note_session import NoteSession, NoteSessionStatus, NoteSource
-from app.services.notes import NoteSessionResponse, create_note_session
+from app.services.notes import (
+    NoteSessionListResponse,
+    NoteSessionResponse,
+    create_note_session,
+    list_note_sessions,
+)
 
 
 class TestCreateNoteSession:
@@ -166,3 +172,139 @@ class TestCreateNoteSession:
         assert isinstance(result.status, NoteSessionStatus)
         assert isinstance(result.source, NoteSource)
         assert isinstance(result.job_id, str)
+
+
+class TestListNoteSessions:
+    """list_note_sessions() -- the read path behind GET /notes."""
+
+    @staticmethod
+    def _stored_session(
+        *,
+        user_id: uuid.UUID,
+        book_id: uuid.UUID,
+        created_at: datetime,
+        title: str,
+    ) -> NoteSession:
+        """A session as the similarity worker would leave it: completed, no job."""
+        return NoteSession(
+            user_id=user_id,
+            book_id=book_id,
+            raw_text="Notes on the section.",
+            source=NoteSource.PASTED,
+            title=title,
+            status=NoteSessionStatus.COMPLETED,
+            matched_section_count=3,
+            created_at=created_at,
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_book_returns_no_sessions(
+        self, async_session: AsyncSession,
+    ):
+        """An untouched book lists nothing rather than raising."""
+        result = await list_note_sessions(
+            async_session,
+            user_id=uuid.uuid4(),
+            book_id=uuid.uuid4(),
+        )
+
+        assert isinstance(result, NoteSessionListResponse)
+        assert result.sessions == []
+        assert result.total == 0
+
+    @pytest.mark.asyncio
+    async def test_stored_session_is_returned_without_a_job_id(
+        self, async_session: AsyncSession,
+    ):
+        """Regression: a stored session has no job_id, and requiring one raised.
+
+        NoteSessionResponse.job_id was a required field, so validating stored
+        rows raised and ``GET /notes`` returned 500 for every book.
+        """
+        user_id = uuid.uuid4()
+        book_id = uuid.uuid4()
+        async_session.add(
+            self._stored_session(
+                user_id=user_id,
+                book_id=book_id,
+                created_at=datetime(2026, 1, 1, 10, 0),
+                title="First pass",
+            )
+        )
+        await async_session.flush()
+
+        result = await list_note_sessions(
+            async_session, user_id=user_id, book_id=book_id,
+        )
+
+        assert result.total == 1
+        assert result.sessions[0].job_id is None
+        assert result.sessions[0].title == "First pass"
+        assert result.sessions[0].matched_section_count == 3
+
+    @pytest.mark.asyncio
+    async def test_most_recent_first(
+        self, async_session: AsyncSession,
+    ):
+        """The newest session is listed first, as the UI expects."""
+        user_id = uuid.uuid4()
+        book_id = uuid.uuid4()
+        async_session.add_all([
+            self._stored_session(
+                user_id=user_id,
+                book_id=book_id,
+                created_at=datetime(2026, 1, 1, 10, 0),
+                title="earlier",
+            ),
+            self._stored_session(
+                user_id=user_id,
+                book_id=book_id,
+                created_at=datetime(2026, 1, 2, 10, 0),
+                title="later",
+            ),
+        ])
+        await async_session.flush()
+
+        result = await list_note_sessions(
+            async_session, user_id=user_id, book_id=book_id,
+        )
+
+        assert [session.title for session in result.sessions] == ["later", "earlier"]
+
+    @pytest.mark.asyncio
+    async def test_scoped_to_the_caller(
+        self, async_session: AsyncSession,
+    ):
+        """Another user's sessions, and another book's, are never listed."""
+        user_id = uuid.uuid4()
+        other_user_id = uuid.uuid4()
+        book_id = uuid.uuid4()
+        other_book_id = uuid.uuid4()
+        async_session.add_all([
+            self._stored_session(
+                user_id=user_id,
+                book_id=book_id,
+                created_at=datetime(2026, 1, 1, 10, 0),
+                title="mine",
+            ),
+            self._stored_session(
+                user_id=other_user_id,
+                book_id=book_id,
+                created_at=datetime(2026, 1, 2, 10, 0),
+                title="someone else's",
+            ),
+            self._stored_session(
+                user_id=user_id,
+                book_id=other_book_id,
+                created_at=datetime(2026, 1, 3, 10, 0),
+                title="another book",
+            ),
+        ])
+        await async_session.flush()
+
+        result = await list_note_sessions(
+            async_session, user_id=user_id, book_id=book_id,
+        )
+
+        assert result.total == 1
+        assert [session.title for session in result.sessions] == ["mine"]

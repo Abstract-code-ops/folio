@@ -8,8 +8,8 @@ Usage:
 
 Examples:
     docker compose exec api python3 /app/fill_metadata.py 62e581b4-9d31-4422-9100-7b6be671323d
-    docker compose exec api python3 /app/fill_metadata.py 62e581b4-9d31-4422-9100-7b6be671323d 10
-    docker compose exec api python3 /app/fill_metadata.py 62e581b4-9d31-4422-9100-7b6be671323d 10 --model gemini-2.0-flash
+    docker compose exec api python3 /app/fill_metadata.py 62e581b4-9d31-4422-9100-7b6be671323d 6
+    docker compose exec api python3 /app/fill_metadata.py 62e581b4-9d31-4422-9100-7b6be671323d 6 --model gemini-3.1-flash-lite
 """
 
 import asyncio
@@ -109,16 +109,27 @@ async def main():
                 continue
             meta = metadata_results[meta_idx]
             meta_idx += 1
-            if meta and any(meta.values()):  # non-empty metadata
+            # Metadata now always carries a "status" key, so ``any(meta.values())``
+            # is no longer a usable emptiness test - reuse the predicate that
+            # selected the section in the first place.
+            if meta and not _is_empty_meta(meta):
                 section.section_metadata = meta
                 updated += 1
 
         db.commit()
         print(f"\n✓ Updated {updated} sections with metadata")
 
-        still_empty = sum(1 for s in sections if s.section_metadata is None or s.section_metadata == {})
+        still_empty = sum(1 for s in sections if _is_empty_meta(s.section_metadata))
+        failed = sum(
+            1
+            for s in sections
+            if (s.section_metadata or {}).get("status") == "failed"
+        )
         if still_empty:
-            print(f"  {still_empty} sections still empty (rate-limited or failed)")
+            print(
+                f"  {still_empty} sections still empty "
+                f"({failed} explicitly failed after repair)"
+            )
         else:
             print("  All sections now have metadata!")
 

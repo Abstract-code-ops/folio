@@ -18,6 +18,7 @@ from app.core.auth import get_current_user
 from app.core.db import get_async_session
 from app.models.book import IngestionStatus
 from app.services.books import (
+    BookDetailResponse,
     BookListResponse,
     BookResponse,
     create_book,
@@ -80,7 +81,7 @@ async def get_books(
     return await list_books(db, status=status, limit=limit, offset=offset)
 
 
-@router.get("/{book_id}", response_model=BookResponse)
+@router.get("/{book_id}", response_model=BookDetailResponse)
 async def get_book_by_id(
     book_id: uuid.UUID,
     load_sections: bool = Query(

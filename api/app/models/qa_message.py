@@ -38,11 +38,14 @@ class QAMessage(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    section_id: Mapped[uuid.UUID] = mapped_column(
+    section_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        nullable=False,
+        nullable=True,
         index=True,
-        comment="The section the question was scoped to",
+        comment=(
+            "The section the question was scoped to; NULL for a turn that did "
+            "not retrieve (a greeting or an off-topic decline)"
+        ),
     )
     question: Mapped[str] = mapped_column(
         Text,
@@ -59,6 +62,16 @@ class QAMessage(TimestampMixin, Base):
             "Source citations for the answer: "
             "[{section_heading, page_start, page_end, excerpt}, ...]. "
             "Populated by the Q&A pipeline."
+        ),
+    )
+    diagnostics: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "What happened during the turn, for the eval page: agent action, "
+            "search queries, retrieved passages with distances, citations "
+            "emitted and any stream error. NULL for turns recorded before it "
+            "existed."
         ),
     )
 

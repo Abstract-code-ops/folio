@@ -1,0 +1,37 @@
+dramatiq-pg not available — using StubBroker
+[PIPELINE] Parsing 'Structure and Interpretation of Computer Programs'...
+book:   Structure and Interpretation of Computer Programs
+status: completed
+
+Downloading PDF from https://jdvyoywfzvfrcckaytmm.supabase.co/storage/v1/object/public/book-pdfs/sicp.pdf ...
+Downloaded 7416886 bytes
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+[PIPELINE] Parsed 140 sections, 203225 words
+[PIPELINE]   checkpoint 6/140 sections (21 chunks so far)
+[PIPELINE]   checkpoint 11/140 sections (36 chunks so far)
+[PIPELINE]   checkpoint 16/140 sections (60 chunks so far)
+[PIPELINE]   checkpoint 21/140 sections (84 chunks so far)
+[PIPELINE]   checkpoint 26/140 sections (109 chunks so far)
+[PIPELINE]   checkpoint 31/140 sections (136 chunks so far)
+[PIPELINE]   checkpoint 36/140 sections (164 chunks so far)
+[PIPELINE]   checkpoint 41/140 sections (205 chunks so far)
+[PIPELINE]   checkpoint 46/140 sections (244 chunks so far)
+[PIPELINE]   checkpoint 51/140 sections (279 chunks so far)
+[PIPELINE]   checkpoint 56/140 sections (315 chunks so far)
+[PIPELINE]   checkpoint 61/140 sections (338 chunks so far)
+[PIPELINE]   checkpoint 66/140 sections (362 chunks so far)
+[PIPELINE]   checkpoint 71/140 sections (413 chunks so far)
+[PIPELINE]   checkpoint 76/140 sections (456 chunks so far)
+[PIPELINE]   checkpoint 81/140 sections (485 chunks so far)
+[PIPELINE]   checkpoint 86/140 sections (510 chunks so far)
+[PIPELINE]   checkpoint 91/140 sections (529 chunks so far)
+[PIPELINE]   checkpoint 96/140 sections (576 chunks so far)
+[PIPELINE]   checkpoint 101/140 sections (604 chunks so far)
+[PIPELINE]   checkpoint 106/140 sections (620 chunks so far)
+[PIPELINE]   checkpoint 111/140 sections (640 chunks so far)
+[PIPELINE]   checkpoint 116/140 sections (660 chunks so far)
+[PIPELINE]   checkpoint 121/140 sections (682 chunks so far)
+[PIPELINE]   checkpoint 126/140 sections (707 chunks so far)
+[PIPELINE]   checkpoint 131/140 sections (739 chunks so far)
+[PIPELINE]   checkpoint 136/140 sections (776 chunks so far)
+[PIPELINE] Done: 0 created, 140 updated, 0 skipped, 822 chunks, metadata reused=140 requested=0

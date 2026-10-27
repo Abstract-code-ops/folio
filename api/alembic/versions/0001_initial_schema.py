@@ -11,7 +11,9 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-import pgvector  # noqa: F401 — registers Vector type with SQLAlchemy
+import pgvector.sqlalchemy  # noqa: F401 — registers the Vector type; the bare
+# `import pgvector` does not load the sqlalchemy submodule, so a from-scratch
+# upgrade died on pgvector.sqlalchemy.Vector below.
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0001"

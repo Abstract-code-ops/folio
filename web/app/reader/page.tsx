@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState, useCallback } from "react";import { useSearchParams } from "next/navigation";
 import { Brain, MessageSquare, FileText } from "lucide-react";
 import dynamicImport from "next/dynamic";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -24,6 +23,7 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { apiClient } from "@/lib/api-client";
 import { useChatStore } from "@/lib/chat-store";
 import type { BookResponse } from "@/types/books";
+import type { HighlightTarget } from "@/components/reader/PdfViewer";
 
 const PdfViewer = dynamicImport(
   () => import("@/components/reader/PdfViewer").then((m) => m.PdfViewer),
@@ -54,19 +54,30 @@ function ComingSoon() {
 function PanelContent({
   activeTab,
   bookId,
-  onNavigateToPage,
+  sectionId,
+  sectionHeading,
+  onCitationClick,
 }: {
   activeTab: TabId;
   bookId: string;
-  onNavigateToPage: (page: number) => void;
+  sectionId?: string;
+  sectionHeading?: string;
+  onCitationClick: (target: { page: number; text: string }) => void;
 }) {
   if (activeTab === "coverage") {
     return <ComingSoon />;
   }
   if (activeTab === "chat") {
-    return <ChatPanel bookId={bookId} onNavigateToPage={onNavigateToPage} />;
+    return <ChatPanel bookId={bookId} onCitationClick={onCitationClick} />;
   }
-  return <NotesPanel bookId={bookId} />;
+  return (
+    <NotesPanel
+      bookId={bookId}
+      sectionId={sectionId}
+      sectionHeading={sectionHeading}
+      onCitationClick={onCitationClick}
+    />
+  );
 }
 
 // ── Inner component ───────────────────────────────────────────
@@ -107,10 +118,36 @@ function ReaderContent() {
     };
   }, [bookId]);
 
-  const handleNavigateToPage = useCallback((page: number) => {
-    setCurrentPage(page);
-  }, []);
+  // A citation click both jumps to its page and asks the viewer to highlight
+  // the cited text. Highlight lives in state so re-clicking the same citation
+  // still re-runs the search.
+  const [highlight, setHighlight] = useState<HighlightTarget | null>(null);
+  const handleCitationClick = useCallback(
+    ({ page, text }: { page: number; text: string }) => {
+      setCurrentPage(page);
+      setHighlight({ page, text });
+    },
+    [],
+  );
 
+  // Which section the current page is in, resolved from the section map that
+  // arrives with the book. Resolved locally on purpose: asking the coverage map
+  // costs seconds and carries every section's score just to answer this.
+  const currentSection = useMemo(() => {
+    const sections = book?.sections;
+    if (!sections || sections.length === 0) return null;
+    const containing = sections.filter(
+      (section) =>
+        currentPage >= section.page_start && currentPage <= section.page_end,
+    );
+    if (containing.length === 0) return null;
+    // A chapter's range contains its subsections': prefer the tightest.
+    return containing.sort(
+      (a, b) =>
+        a.page_end - a.page_start - (b.page_end - b.page_start) ||
+        b.level - a.level,
+    )[0];
+  }, [book, currentPage]);
   // ── Error state ─────────────────────────────────────────────
   if (error || !bookId) {
     return (
@@ -189,7 +226,9 @@ function ReaderContent() {
                 <PanelContent
                   activeTab={activeTab}
                   bookId={bookId}
-                  onNavigateToPage={handleNavigateToPage}
+                  sectionId={currentSection?.id}
+                  sectionHeading={currentSection?.heading}
+                  onCitationClick={handleCitationClick}
                 />
               </div>
             </div>
@@ -207,6 +246,7 @@ function ReaderContent() {
                 url={book.storage_url}
                 pageNumber={currentPage}
                 onPageChange={setCurrentPage}
+                highlight={highlight}
               />
             </main>
           </ResizablePanel>
@@ -234,6 +274,7 @@ function ReaderContent() {
           url={book.storage_url}
           pageNumber={currentPage}
           onPageChange={setCurrentPage}
+          highlight={highlight}
         />
       </main>
 
@@ -271,8 +312,10 @@ function ReaderContent() {
                 <PanelContent
                   activeTab={id}
                   bookId={bookId}
-                  onNavigateToPage={(page) => {
-                    handleNavigateToPage(page);
+                  sectionId={currentSection?.id}
+                  sectionHeading={currentSection?.heading}
+                  onCitationClick={(target) => {
+                    handleCitationClick(target);
                     setMobileSheetOpen(false);
                   }}
                 />

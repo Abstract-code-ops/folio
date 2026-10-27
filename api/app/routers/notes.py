@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,11 +25,18 @@ from app.models.note_session import NoteSource
 from app.models.section import Section
 from app.pipeline.note_gen import generate_section_notes
 from app.services.notes import (
+    NoteBlockDraft,
+    NoteDetailResponse,
     NoteSessionListResponse,
     NoteSessionResponse,
     create_note_session,
+    create_note_with_blocks,
+    get_note_detail,
     list_note_sessions,
+    list_notes_for_section,
+    replace_note_blocks,
 )
+from app.services.note_topic import stream_topic_note
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +63,59 @@ class GenerateNotesRequest(BaseModel):
     chapter_end: int = 0
 
 
+class CreateNoteDocumentRequest(BaseModel):
+    """Request body for ``POST /notes/document``.
+
+    ``blocks`` may be empty: the editor creates a blank note so the caret is
+    live before the first keystroke. ``source`` defaults to ``pasted`` because
+    a note the student writes is not model output; topic generation passes
+    ``ai_generated`` instead.
+    """
+
+    book_id: uuid.UUID
+    blocks: list[NoteBlockDraft] = []
+    title: Optional[str] = None
+    source: NoteSource = NoteSource.PASTED
+
+
+class ReplaceBlocksRequest(BaseModel):
+    """Request body for ``PUT /notes/{note_id}/blocks``.
+
+    The whole ordered list is sent: an autosave is a save of what the editor
+    holds, not a patch. Blocks that already exist carry their ``id`` so their
+    links survive the save.
+    """
+
+    blocks: list[NoteBlockDraft]
+
+
 # ── Endpoints ──────────────────────────────────────────────────
 
 
 @router.get("", response_model=NoteSessionListResponse)
 async def get_note_sessions(
     book_id: uuid.UUID,
+    section_id: Optional[uuid.UUID] = None,
     limit: int = 50,
     offset: int = 0,
     user_id: uuid.UUID = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ) -> NoteSessionListResponse:
-    """List note sessions for a user + book, most recent first."""
+    """List note sessions for a user + book, most recent first.
+
+    With ``section_id`` the list narrows to notes that cite that section, which
+    is what the reader shows while the student is on it. Same response shape, so
+    the client keeps one type.
+    """
+    if section_id is not None:
+        return await list_notes_for_section(
+            db,
+            user_id=user_id,
+            book_id=book_id,
+            section_id=section_id,
+            limit=limit,
+        )
+
     return await list_note_sessions(
         db,
         user_id=user_id,
@@ -126,6 +174,111 @@ async def post_generate_notes(
             "Cache-Control": "no-cache",
         },
     )
+
+
+# ── Note documents ─────────────────────────────────────────────
+
+
+@router.post("/document", response_model=NoteDetailResponse, status_code=201)
+async def post_note_document(
+    body: CreateNoteDocumentRequest,
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> NoteDetailResponse:
+    """Create a note document from blocks (possibly none at all).
+
+    No similarity job is queued: a block note's links come from generation or
+    from the student, so the section-level matcher has nothing to add.
+    """
+    return await create_note_with_blocks(
+        db,
+        user_id=user_id,
+        book_id=body.book_id,
+        blocks=body.blocks,
+        source=body.source,
+        title=body.title,
+    )
+
+
+@router.get("/{note_id}", response_model=NoteDetailResponse)
+async def get_note(
+    note_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> NoteDetailResponse:
+    """Read one note with its blocks and links.
+
+    A note belonging to someone else is reported as missing rather than
+    forbidden: the caller has no business knowing it exists.
+    """
+    note = await get_note_detail(db, user_id=user_id, note_id=note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+@router.put("/{note_id}/blocks", response_model=NoteDetailResponse)
+async def put_note_blocks(
+    note_id: uuid.UUID,
+    body: ReplaceBlocksRequest,
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> NoteDetailResponse:
+    """Autosave the editor's whole block list.
+
+    Blocks are diffed by id, so a block that survives the save keeps its links.
+    The saved document comes back so the client can pick up ids for blocks it
+    has just created.
+    """
+    try:
+        return await replace_note_blocks(
+            db, user_id=user_id, note_id=note_id, blocks=body.blocks,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Note not found") from exc
+
+
+# ── Topic notes ────────────────────────────────────────────────
+
+
+class GenerateTopicRequest(BaseModel):
+    """Request body for ``POST /notes/topic``."""
+
+    book_id: uuid.UUID
+    topic: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/topic")
+async def post_topic_note(
+    body: GenerateTopicRequest,
+    user_id: uuid.UUID = Depends(get_current_user),
+) -> StreamingResponse:
+    """Generate notes from a topic, streamed as NDJSON events."""
+    return StreamingResponse(
+        _topic_events(user_id, body.book_id, body.topic),
+        media_type="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+async def _topic_events(
+    user_id: uuid.UUID,
+    book_id: uuid.UUID,
+    topic: str,
+) -> AsyncGenerator[bytes, None]:
+    """Relay the service's events as NDJSON.
+
+    The generator opens its own session, as the chapter-range stream does: a
+    request-scoped one is closed before a long stream finishes.
+    """
+    async with AsyncSessionLocal() as db:
+        async for event in stream_topic_note(
+            db, user_id=user_id, book_id=book_id, topic=topic
+        ):
+            yield (json.dumps(event) + "\n").encode()
 
 
 # ── Streaming generator ────────────────────────────────────────

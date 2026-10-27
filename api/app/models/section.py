@@ -16,7 +16,7 @@ similarity matching.
 import uuid
 from typing import TYPE_CHECKING, Any, List, Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -115,6 +115,15 @@ class Section(TimestampMixin, Base):
         Vector(768),
         nullable=True,
         comment="pgvector embedding for coverage similarity matching; dimension matches the configured embedding model",
+    )
+
+    # ── Embedding version ─────────────────────────────────────
+    embed_version: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="1 = embeddings built without task prefixes; 2 = nomic prefix inputs (U7)",
     )
 
     # ── Relationships ─────────────────────────────────────────

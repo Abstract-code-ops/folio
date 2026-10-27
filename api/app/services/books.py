@@ -12,7 +12,7 @@ import uuid
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -46,6 +46,27 @@ class BookListResponse(BaseModel):
     total: int
 
 
+class BookSectionSummary(BaseModel):
+    """Just enough of a section to answer \"which section is this page in\".
+
+    Deliberately not the coverage map: that response carries aggregated scores
+    for every section in the book and is far too heavy to resolve one page.
+    """
+
+    id: uuid.UUID
+    heading: str
+    page_start: int
+    page_end: int
+    level: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookDetailResponse(BookResponse):
+    """A book, plus its section map when the caller asked for it."""
+
+    sections: list[BookSectionSummary] = []
+
 # ── Service functions ──────────────────────────────────────────
 
 
@@ -66,21 +87,25 @@ async def list_books(
     if status is not None:
         query = query.where(Book.ingestion_status == status)
 
-    # Get total count before pagination
-    count_query = select(Book.id).select_from(Book)
-    if status is not None:
-        count_query = count_query.where(Book.ingestion_status == status)
-    total = (await db.execute(count_query)).scalars().all()
-    total_count = len(total)
-
-    # Paginated fetch
-    query = query.limit(limit).offset(offset)
-    result = await db.execute(query)
+    # Fetch the page first: a page shorter than the limit proves there is
+    # nothing after it, which makes the count query unnecessary. One fewer
+    # round trip per library load, and here the round trip is the whole cost.
+    result = await db.execute(query.limit(limit).offset(offset))
     books = result.scalars().unique().all()
+
+    if len(books) < limit:
+        total = offset + len(books)
+    else:
+        count_query = select(func.count()).select_from(Book)
+        if status is not None:
+            count_query = count_query.where(
+                Book.ingestion_status == status
+            )
+        total = (await db.execute(count_query)).scalar_one()
 
     return BookListResponse(
         books=[BookResponse.model_validate(b) for b in books],
-        total=total_count,
+        total=total,
     )
 
 
@@ -105,7 +130,14 @@ async def get_book(
     if book is None:
         return None
 
-    return BookResponse.model_validate(book)
+    # Sections are only read when they were eagerly loaded: touching the
+    # relationship otherwise lazy-loads inside an async session and raises.
+    if load_sections:
+        detail = BookDetailResponse.model_validate(book)
+        detail.sections.sort(key=lambda section: (section.page_start, section.page_end))
+        return detail
+
+    return BookDetailResponse(**BookResponse.model_validate(book).model_dump())
 
 
 async def get_books_by_status(

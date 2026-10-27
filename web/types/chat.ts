@@ -14,6 +14,7 @@ export interface QaTokenEvent {
 
 export interface QaCitationEvent {
   type: "citation";
+  passage: number;
   chunk_index: number;
   section_heading: string;
   page_start: number | null;

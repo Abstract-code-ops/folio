@@ -10,7 +10,7 @@ ground its answers.
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import ForeignKey, Integer, Text
+from sqlalchemy import ForeignKey, Integer, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,6 +48,27 @@ class Chunk(TimestampMixin, Base):
         Vector(768),
         nullable=True,
         comment="pgvector embedding for Q&A retrieval; dimension matches configured embedding model",
+    )
+
+    # ── Page range ────────────────────────────────────────────
+    page_start: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="First page covered by the chunk; NULL for rows ingested before parser v2",
+    )
+    page_end: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Last page covered by the chunk; NULL for rows ingested before parser v2",
+    )
+
+    # ── Embedding version ─────────────────────────────────────
+    embed_version: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="1 = embeddings built without task prefixes; 2 = nomic prefix inputs (U7)",
     )
 
     # ── Relationships ─────────────────────────────────────────

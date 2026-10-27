@@ -1,37 +1,53 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   FileText,
   Plus,
-  ChevronDown,
   ChevronRight,
   Sparkles,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
+import { isFresh, useNotesCache } from "@/lib/notes-store";
 import { Loader } from "@/components/ui/loader";
+import { NewNoteSheet } from "./NewNoteSheet";
+import { NoteEditor } from "./NoteEditor";
+import { NoteView } from "./NoteView";
 import type {
   NoteSessionResponse,
   NoteSessionListResponse,
   GeneratedSectionNotes,
 } from "@/types/notes";
-
 // ── Component ────────────────────────────────────────────────
 
 export interface NotesPanelProps {
   bookId: string;
+  /** The section the reader is on, resolved by the reader from the book. */
+  sectionId?: string;
+  /** Its heading, used as the label above the backlinks. */
+  sectionHeading?: string;
+  /** Jump the reader to a cited page — the same contract the chat panel uses. */
+  onCitationClick?: (target: { page: number; text: string }) => void;
   className?: string;
 }
 
 type ModalMode = "paste" | "ai_generate" | null;
 
-export function NotesPanel({ bookId, className }: NotesPanelProps) {
+export function NotesPanel({
+  bookId,
+  sectionId,
+  sectionHeading,
+  onCitationClick,
+  className,
+}: NotesPanelProps) {
   const [sessions, setSessions] = useState<NoteSessionResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,10 +60,15 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
   const [chapterEnd, setChapterEnd] = useState(0);
   const [generating, setGenerating] = useState(false);
 
+  // ── Cache: the list paints from memory and refreshes in the background ──
+  const saveCached = useNotesCache((state) => state.save);
+  const touchCached = useNotesCache((state) => state.touch);
+
   const fetchSessions = useCallback(async () => {
     try {
       const data = await apiClient.listNoteSessions(bookId, { limit: 50 });
       setSessions(data.sessions);
+      saveCached(bookId, data.sessions, data.total);
       setError(null);
     } catch (err) {
       setError(
@@ -56,11 +77,30 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [bookId]);
+  }, [bookId, saveCached]);
 
+  // First open of a book paints from the cache when there is one, and only
+  // talks to the server when the entry is missing or past its TTL. Without
+  // this the panel re-queried on every tab switch, at ~1s per round trip.
   useEffect(() => {
-    fetchSessions();
-  }, [fetchSessions]);
+    const entry = useNotesCache.getState().byBook[bookId];
+    if (entry) {
+      setSessions(entry.sessions);
+      setLoading(false);
+    }
+    if (isFresh(entry)) return;
+    void fetchSessions();
+  }, [bookId, fetchSessions]);
+
+  // ── Backlinks, computed from the cached list ───────────────
+  // Each note summary carries the sections it cites, so this is a filter, not a
+  // request: flipping pages must never touch the database.
+  const backlinks = useMemo(() => {
+    if (!sectionId) return null;
+    return sessions
+      .filter((note) => (note.section_ids ?? []).includes(sectionId))
+      .slice(0, 5);
+  }, [sessions, sectionId]);
 
   // ── Submit pasted notes ─────────────────────────────────────
   const handlePasteSubmit = useCallback(async () => {
@@ -129,6 +169,38 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
     });
   }
 
+  // One note at a time: the list is the index, the note is the page.
+  if (openNoteId && editing) {
+    return (
+      <NoteEditor
+        noteId={openNoteId}
+        onDone={() => setEditing(false)}
+        onSaved={() => touchCached(bookId)}
+        className={className}
+      />
+    );
+  }
+
+  if (openNoteId) {
+    return (
+      <NoteView
+        noteId={openNoteId}
+        onBack={() => {
+          setOpenNoteId(null);
+          setEditing(false);
+          // Editing marked the cache stale; reading left it fresh. Refresh only
+          // when something actually changed, so reading a note stays free.
+          if (!isFresh(useNotesCache.getState().byBook[bookId])) {
+            void fetchSessions();
+          }
+        }}
+        onEdit={() => setEditing(true)}
+        onCitationClick={onCitationClick}
+        className={className}
+      />
+    );
+  }
+
   return (
     <div className={cn("flex flex-col h-full", className)}>
       {/* Header with new session button */}
@@ -138,107 +210,121 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
             Notes
           </span>
         </div>
-        <button
-          onClick={() => setModalMode("paste")}
-          className="flex items-center gap-1.5 mt-2 w-full px-3 py-2 rounded-md bg-accent/10 text-accent text-body-sm hover:bg-accent/20 transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
-          New session
-        </button>
+        <div className="mt-2 space-y-1.5">
+          <button
+            onClick={() => setShowSheet(true)}
+            className="flex items-center gap-1.5 w-full px-3 py-2 rounded-md bg-accent/10 text-accent text-body-sm hover:bg-accent/20 transition-colors"
+          >
+            <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
+            New note
+          </button>
+          <button
+            onClick={() => setModalMode("paste")}
+            className="flex items-center gap-1.5 w-full px-3 py-2 rounded-md bg-bg-elevated text-text-muted text-body-sm hover:text-text-primary transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
+            Paste notes
+          </button>
+        </div>
       </div>
 
       {/* Session list — scrollable */}
       <div className="flex-1 overflow-y-auto">
+        {sectionHeading && backlinks && backlinks.length > 0 && (
+          <div className="border-b border-border-subtle bg-bg-elevated/40 px-4 py-3">
+            <p className="text-body-sm text-text-subtle">On this section</p>
+            <p className="text-body-sm text-text-primary truncate">
+              {sectionHeading}
+            </p>
+            <div className="mt-2 space-y-1">
+              {backlinks.map((note) => (
+                <button
+                  key={note.id}
+                  onClick={() => setOpenNoteId(note.id)}
+                  className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-body-sm text-text-primary hover:bg-bg-base transition-colors"
+                >
+                  <FileText
+                    className="h-3.5 w-3.5 shrink-0 text-text-subtle"
+                    strokeWidth={1.5}
+                  />
+                  <span className="truncate">
+                    {note.title ?? "Untitled note"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader />
           </div>
         ) : error ? (
-          <div className="px-4 py-8 text-center">
-            <p className="text-body-sm text-state-error">{error}</p>
+          <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+            <p className="text-body-sm text-state-error mb-3">{error}</p>
+            <button
+              onClick={() => {
+                setLoading(true);
+                fetchSessions();
+              }}
+              className="px-3 py-1.5 rounded-md bg-bg-elevated text-body-sm text-text-primary hover:bg-bg-surface transition-colors"
+            >
+              Try again
+            </button>
           </div>
         ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
             <FileText className="h-8 w-8 text-text-subtle mb-3" />
-            <p className="text-body text-text-muted mb-1">No note sessions yet</p>
+            <p className="text-body text-text-muted mb-1">No notes yet</p>
             <p className="text-body-sm text-text-subtle">
-              Add a note session to start filling in your coverage map.
+              Start a note to keep what you learn from this book.
             </p>
           </div>
         ) : (
           <div className="divide-y divide-border-subtle">
-            {sessions.map((session) => {
-              const isExpanded = expandedId === session.id;
-              return (
-                <div key={session.id}>
-                  {/* Session header */}
-                  <button
-                    onClick={() =>
-                      setExpandedId(isExpanded ? null : session.id)
-                    }
-                    className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-bg-elevated/50 transition-colors"
-                  >
-                    {isExpanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 text-text-subtle shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5 text-text-subtle shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-body-sm text-text-primary truncate">
-                        {session.title ?? "Untitled session"}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-body-sm text-text-subtle">
-                          {formatDate(session.created_at)}
-                        </span>
+            {sessions.map((session) => (
+              <button
+                key={session.id}
+                onClick={() => setOpenNoteId(session.id)}
+                className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-bg-elevated/50 transition-colors"
+              >
+                <ChevronRight className="h-3.5 w-3.5 text-text-subtle shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-body-sm text-text-primary truncate">
+                    {session.title ?? "Untitled session"}
+                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-body-sm text-text-subtle">
+                      {formatDate(session.created_at)}
+                    </span>
+                    <span className="text-body-sm text-text-subtle">·</span>
+                    <span className="text-body-sm text-text-subtle">
+                      {session.source === "ai_generated" ? "AI" : "Written"}
+                    </span>
+                    {session.matched_section_count !== null && (
+                      <>
                         <span className="text-body-sm text-text-subtle">·</span>
                         <span className="text-body-sm text-text-subtle">
-                          {session.source === "ai_generated"
-                            ? "AI"
-                            : "Pasted"}
+                          {session.matched_section_count} sections
                         </span>
-                        {session.matched_section_count !== null && (
-                          <>
-                            <span className="text-body-sm text-text-subtle">·</span>
-                            <span className="text-body-sm text-text-subtle">
-                              {session.matched_section_count} sections
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <span
-                      className={cn(
-                        "text-body-sm",
-                        session.status === "completed"
-                          ? "text-state-success"
-                          : session.status === "failed"
-                            ? "text-state-error"
-                            : "text-state-warning",
-                      )}
-                    >
-                      {session.status}
-                    </span>
-                  </button>
-
-                  {/* Expanded detail */}
-                  {isExpanded && (
-                    <div className="px-4 pb-3 pt-1">
-                      <div className="rounded-md bg-bg-base p-3">
-                        <p className="text-body-sm text-text-muted">
-                          Session ID: {session.id.slice(0, 8)}…
-                        </p>
-                        {session.matched_section_count !== null && (
-                          <p className="text-body-sm text-text-muted mt-1">
-                            Matched {session.matched_section_count} sections
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
+                <span
+                  className={cn(
+                    "text-body-sm",
+                    session.status === "completed"
+                      ? "text-state-success"
+                      : session.status === "failed"
+                        ? "text-state-error"
+                        : "text-state-warning",
+                  )}
+                >
+                  {session.status}
+                </span>
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -254,6 +340,20 @@ export function NotesPanel({ bookId, className }: NotesPanelProps) {
             Generate AI notes
           </button>
         </div>
+      )}
+
+      {showSheet && (
+        <NewNoteSheet
+          bookId={bookId}
+          onClose={() => setShowSheet(false)}
+          onCreated={(noteId, edit) => {
+            setShowSheet(false);
+            touchCached(bookId);
+            void fetchSessions();
+            setOpenNoteId(noteId);
+            if (edit) setEditing(true);
+          }}
+        />
       )}
 
       {/* ── Modal ────────────────────────────────────────── */}

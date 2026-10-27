@@ -19,8 +19,11 @@ export interface NoteSessionResponse {
   source: NoteSource;
   status: NoteSessionStatus;
   matched_section_count: number | null;
-  job_id: string;
+  /** Present only on the reply to a create request; null for a stored session. */
+  job_id: string | null;
   created_at: string;
+  /** Sections this note cites, so the panel can find backlinks locally. */
+  section_ids: string[];
 }
 
 // ── AI-generated notes ────────────────────────────────────────
@@ -40,3 +43,87 @@ export interface GeneratedSectionNotes {
   page_end: number;
   concepts: GeneratedConcept[];
 }
+
+// ── Note documents: blocks and links ──────────────────────────
+
+export type BlockKind = "heading" | "paragraph" | "bullet" | "card";
+export type BlockOrigin = "typed" | "ai" | "ocr";
+export type LinkStatus = "suggested" | "accepted" | "dismissed";export type LinkOrigin = "generated" | "auto" | "manual";
+
+/** A stored link: what a citation chip renders and where it jumps to. */
+export interface NoteLink {
+  id: string;
+  chunk_id: string | null;
+  section_id: string | null;
+  anchor_heading_path: string;
+  page_start: number;
+  page_end: number;
+  excerpt: string;
+  status: LinkStatus;
+  origin: LinkOrigin;
+}
+
+export interface NoteBlock {
+  id: string;
+  position: number;
+  kind: BlockKind;
+  text: string;
+  origin: BlockOrigin;
+  links: NoteLink[];
+}
+
+/** A whole note: its header plus its blocks in order. */
+export interface NoteDetail {
+  id: string;
+  book_id: string;
+  title: string | null;
+  source: NoteSource;
+  status: NoteSessionStatus;
+  matched_section_count: number | null;
+  created_at: string;
+  updated_at: string | null;
+  /** Notes that predate blocks keep their text here. */
+  raw_text: string;
+  blocks: NoteBlock[];
+}
+
+/** A link as submitted — the server derives the excerpt hash itself. */
+export interface NoteLinkDraft {
+  chunk_id?: string | null;
+  section_id?: string | null;
+  anchor_heading_path: string;
+  page_start: number;
+  page_end: number;
+  excerpt: string;
+  distance?: number | null;
+  origin: LinkOrigin;
+  status?: LinkStatus;
+}
+
+/**
+ * A block as submitted. `id` is present for a block that already exists, which
+ * is how autosave keeps its links; omit it for a block the editor just made.
+ */
+export interface NoteBlockDraft {
+  id?: string;
+  kind: BlockKind;
+  text: string;
+  origin?: BlockOrigin;
+  links?: NoteLinkDraft[];
+}
+
+/** Events streamed while a note is generated from a topic. */
+export type NoteTopicEvent =
+  | {
+      type: "card";
+      index: number;
+      concept: string;
+      definition: string;
+      explanation: string;
+      example: string;
+      sources: number[];
+    }
+  | { type: "gaps"; gaps: string[] }
+  | { type: "done"; note_id: string; title: string; sections: number }
+  | { type: "not_covered"; message: string }
+  | { type: "error"; message: string };

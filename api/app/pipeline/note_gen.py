@@ -1,7 +1,8 @@
 """LLM note generation (Pass 2).
 
 Generates structured study notes for a single section using a grounded
-LLM call (Cerebras via LiteLLM). The output follows a fixed schema:
+LLM call (VoidAI ``gpt-oss-20b`` via LiteLLM). The output follows a fixed
+schema:
 
   - concept_name
   - one-sentence definition
@@ -15,12 +16,21 @@ stored metadata — it does not draw on general knowledge.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ValidationError
 
-from app.core.config import settings
-from app.core.litellm import NOTE_GEN_MODEL, void_acompletion
+from app.core.llm import NOTE_GEN_MODEL, void_acompletion
+from app.pipeline.json_output import JsonOutputError, parse_json_object
+
+logger = logging.getLogger(__name__)
+
+# Section text beyond this many words is not sent to the model: notes come
+# from the concepts a section introduces, which live in its opening passages.
+# The longest section in the corpus is ~5200 words, and sending all of it
+# costs context for no gain.
+MAX_INPUT_WORDS = 3000
 
 # ── Output schemas ─────────────────────────────────────────────
 
@@ -43,6 +53,14 @@ class GeneratedSectionNotes(BaseModel):
     page_start: int
     page_end: int
     concepts: list[GeneratedConcept]
+
+
+class NoteGenerationError(RuntimeError):
+    """Raised when the model's note output cannot be parsed or validated.
+
+    Callers catch this per section and continue: one bad section must not
+    abort a whole chapter's note stream.
+    """
 
 
 # ── Prompt template ───────────────────────────────────────────
@@ -68,6 +86,36 @@ Rules:
 # ── Pipeline function ──────────────────────────────────────────
 
 
+def _truncate_for_prompt(heading: str, raw_text: str) -> str:
+    """Cap the section text handed to the model, logging when it is cut."""
+    words = raw_text.split()
+    if len(words) <= MAX_INPUT_WORDS:
+        return raw_text
+    logger.warning(
+        "Truncating section '%s' from %d to %d words for note generation",
+        heading[:60],
+        len(words),
+        MAX_INPUT_WORDS,
+    )
+    return " ".join(words[:MAX_INPUT_WORDS])
+
+
+def _loads_json_object(content: str | None, *, section_id: str) -> dict[str, Any]:
+    """Parse the model's JSON reply, keeping this module's error type.
+
+    Every failure mode (empty reply, truncated or malformed JSON, a JSON
+    array instead of an object) becomes ``NoteGenerationError`` so callers
+    have one thing to catch. The parsing itself is shared with the topic
+    stage, which has the same failure modes.
+    """
+    try:
+        return parse_json_object(
+            content, context=f"note generation for section {section_id}"
+        )
+    except JsonOutputError as exc:
+        raise NoteGenerationError(str(exc)) from exc
+
+
 def _build_user_prompt(
     heading: str,
     raw_text: str,
@@ -75,7 +123,7 @@ def _build_user_prompt(
 ) -> str:
     """Build the user message with section content and metadata."""
     parts = [f"# Section: {heading}\n"]
-    parts.append(f"## Full Text\n{raw_text}\n")
+    parts.append(f"## Full Text\n{_truncate_for_prompt(heading, raw_text)}\n")
 
     if metadata:
         parts.append("## Section Metadata\n")
@@ -139,16 +187,27 @@ async def generate_section_notes(
     )
 
     content = response.choices[0].message.content
+    finish_reason = response.choices[0].finish_reason
 
-    # Parse the response into our schema
-    import json
+    payload = _loads_json_object(content, section_id=section_id)
 
-    parsed = json.loads(content)
-
-    return GeneratedSectionNotes(
-        section_id=section_id,
-        section_heading=heading,
-        page_start=page_start,
-        page_end=page_end,
-        concepts=[GeneratedConcept(**c) for c in parsed["concepts"]],
-    )
+    try:
+        return GeneratedSectionNotes.model_validate(
+            {
+                "section_id": section_id,
+                "section_heading": heading,
+                "page_start": page_start,
+                "page_end": page_end,
+                "concepts": payload.get("concepts"),
+            }
+        )
+    except ValidationError as exc:
+        detail = (
+            " (the model output was cut off: finish_reason=length)"
+            if finish_reason == "length"
+            else ""
+        )
+        raise NoteGenerationError(
+            f"note generation for section {section_id} did not return the "
+            f"expected shape{detail}: {exc.error_count()} validation error(s)"
+        ) from exc

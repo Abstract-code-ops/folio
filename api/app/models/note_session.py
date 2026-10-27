@@ -24,6 +24,7 @@ from app.core.db import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.book import Book
+    from app.models.note_block import NoteBlock
 
 
 class NoteSource(str, enum.Enum):
@@ -94,6 +95,18 @@ class NoteSession(TimestampMixin, Base):
         default=NoteSessionStatus.PENDING,
         nullable=False,
         index=True,
+    )
+
+    # ── Relationships ────────────────────────────────────────
+    # A note's body is its blocks, ordered by position. Deleting the note
+    # deletes them (the database cascade does the work; passive_deletes stops
+    # SQLAlchemy loading every child just to delete it).
+    blocks: Mapped[list["NoteBlock"]] = relationship(
+        "NoteBlock",
+        back_populates="note",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="NoteBlock.position",
     )
 
     def __repr__(self) -> str:

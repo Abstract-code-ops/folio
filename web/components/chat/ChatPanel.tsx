@@ -5,6 +5,7 @@ import {
   Send,
   MessageSquare,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
@@ -24,17 +25,17 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 
 export interface ChatPanelProps {
   bookId: string;
-  /** Called when a citation is clicked — parent navigates the PDF reader */
-  onNavigateToPage?: (page: number) => void;
+  /** Called when a citation is clicked — the parent jumps to the page and highlights the cited text */
+  onCitationClick?: (target: { page: number; text: string }) => void;
   className?: string;
 }
 
-export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProps) {
+export function ChatPanel({ bookId, onCitationClick, className }: ChatPanelProps) {
   const messages = useChatStore((s) => s.chats[bookId]?.messages ?? EMPTY_MESSAGES);
-  const summary = useChatStore((s) => s.chats[bookId]?.summary ?? null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -43,15 +44,18 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Fold the oldest messages (beyond the recent window) into the summary,
-  // leaving the recent messages intact.
+  // Fold older messages into the rolling summary. The thread itself is never
+  // trimmed: the student keeps their whole conversation on screen, and only the
+  // request payload is compacted.
   const rollUpIfNeeded = useCallback(async () => {
     const store = useChatStore.getState();
     const chat = store.getChat(bookId);
-    if (chat.messages.length <= MAX_VISIBLE) return;
+    const covered = chat.summarizedCount ?? 0;
+    const uncovered = chat.messages.length - covered;
+    if (uncovered <= MAX_VISIBLE) return;
 
-    const overflow = chat.messages.length - RECENT_KEEP;
-    const toSummarize = chat.messages.slice(0, overflow);
+    const overflow = uncovered - RECENT_KEEP;
+    const toSummarize = chat.messages.slice(covered, covered + overflow);
 
     const transcript: { role: string; content: string }[] = [];
     if (chat.summary) {
@@ -64,8 +68,7 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
     try {
       const newSummary = await apiClient.summarizeConversation(transcript);
       if (newSummary) {
-        store.setSummary(bookId, newSummary);
-        store.dropOldest(bookId, overflow);
+        store.applySummary(bookId, newSummary, covered + overflow);
       }
     } catch {
       // Summarization is best-effort — keep the messages if it fails.
@@ -81,9 +84,11 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
     const store = useChatStore.getState();
     const chat = store.getChat(bookId);
 
-    // Conversation history (summary + recent messages) before this turn.
+    // Only the messages the summary does not already cover go to the backend.
+    // The full thread stays on screen regardless.
+    const covered = chat.summarizedCount ?? 0;
     const history: { role: string; content: string }[] = [];
-    for (const m of chat.messages) {
+    for (const m of chat.messages.slice(covered)) {
       if (m.text.trim()) history.push({ role: m.role, content: m.text });
     }
 
@@ -118,6 +123,7 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
 
           case "citation":
             currentCitations.push({
+              passage: event.passage,
               sectionHeading: event.section_heading,
               pageStart: event.page_start,
               pageEnd: event.page_end,
@@ -147,6 +153,24 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
     }
   }, [input, streaming, bookId, rollUpIfNeeded]);
 
+  // Clearing is destructive, so it takes two taps: the first asks, the second
+  // acts, and the prompt resets itself if left alone.
+  useEffect(() => {
+    if (!confirmClear) return;
+    const timer = setTimeout(() => setConfirmClear(false), 3000);
+    return () => clearTimeout(timer);
+  }, [confirmClear]);
+
+  const handleClearChat = useCallback(() => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    useChatStore.getState().resetChat(bookId);
+    setConfirmClear(false);
+    setError(null);
+  }, [confirmClear, bookId]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -159,17 +183,16 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
 
   const handleCitationClick = useCallback(
     (citation: Citation) => {
-      if (citation.pageStart && onNavigateToPage) {
-        onNavigateToPage(citation.pageStart);
-      }
+      if (!citation.pageStart) return;
+      onCitationClick?.({ page: citation.pageStart, text: citation.excerpt });
     },
-    [onNavigateToPage],
+    [onCitationClick],
   );
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
       {/* Empty state */}
-      {messages.length === 0 && !summary && !error && (
+      {messages.length === 0 && !error && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
           <MessageSquare className="h-8 w-8 text-text-subtle mb-3" />
           <p className="text-body text-text-muted mb-1">
@@ -181,15 +204,30 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
         </div>
       )}
 
+      {/* Thread header with the clear action */}
+      {messages.length > 0 && (
+        <div className="flex items-center justify-between border-b border-border-subtle px-3 py-1.5">
+          <span className="text-body-sm text-text-subtle">Chat</span>
+          <button
+            type="button"
+            onClick={handleClearChat}
+            disabled={streaming}
+            aria-label="Clear chat"
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm transition-colors",
+              "hover:bg-bg-elevated disabled:opacity-50 disabled:pointer-events-none",
+              confirmClear ? "text-accent" : "text-text-subtle",
+            )}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {confirmClear ? "Confirm clear" : "Clear chat"}
+          </button>
+        </div>
+      )}
+
       {/* Message thread */}
-      {(messages.length > 0 || summary) && (
+      {messages.length > 0 && (
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-          {summary && (
-            <div className="rounded-lg bg-bg-elevated border border-border-subtle px-3 py-2">
-              <p className="text-body-sm text-text-subtle mb-0.5">Earlier in this chat</p>
-              <p className="text-body-sm text-text-muted">{summary}</p>
-            </div>
-          )}
           {messages.map((msg, i) => (
             <div
               key={i}
@@ -228,6 +266,9 @@ export function ChatPanel({ bookId, onNavigateToPage, className }: ChatPanelProp
                         <ExternalLink className="h-3 w-3 text-accent mt-0.5 shrink-0" />
                         <div className="min-w-0">
                           <p className="text-body-sm text-text-primary truncate">
+                            {typeof cite.passage === "number"
+                              ? `[${cite.passage}] `
+                              : ""}
                             {cite.sectionHeading}
                           </p>
                           <p className="text-body-sm text-text-subtle">

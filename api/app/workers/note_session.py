@@ -16,7 +16,7 @@ import dramatiq
 from sqlalchemy import select
 
 from app.core.db import SyncSessionLocal
-from app.core.litellm import embed_text_sync
+from app.core.llm import embed_text_sync
 from app.models.coverage_event import CoverageEvent, EventType
 from app.models.note_session import NoteSession, NoteSessionStatus
 from app.models.section import Section
