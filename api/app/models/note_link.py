@@ -20,7 +20,7 @@ import uuid
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,13 +60,6 @@ class NoteLink(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    chunk_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("chunk.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-        comment="NULL after a re-ingest recreated the chunks; the anchor still resolves",
-    )
     section_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("section.id", ondelete="SET NULL"),
@@ -93,11 +86,6 @@ class NoteLink(TimestampMixin, Base):
         comment="sha256 of the normalised excerpt; the exact re-resolution key",
     )
 
-    distance: Mapped[Optional[float]] = mapped_column(
-        Float,
-        nullable=True,
-        comment="Cosine distance at match time; NULL for manual links",
-    )
     origin: Mapped[LinkOrigin] = mapped_column(
         SAEnum(
             LinkOrigin,

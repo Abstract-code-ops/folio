@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Lora:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Lora:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -54,8 +54,11 @@
   --bg-elevated: 30 30 33;
   --bg-reader: 19 19 20;
   --text-primary: 240 238 233;
-  --text-muted: 107 106 111;
-  --text-subtle: 74 73 80;
+  --text-muted: 139 138 144;
+  /* AA on --bg-base #0E0E0F (luminance 0.0045): 5.6:1 and 4.5:1. The previous
+     values were 3.37:1 and 2.03:1, so every caption, tab label and metadata
+     line failed contrast in dark mode. */
+  --text-subtle: 133 133 140;
   --border-default: 37 37 40;
   --border-subtle: 28 28 31;
   --accent: 78 105 199;
@@ -74,14 +77,14 @@
   }
 
   html {
-    @apply bg-bg-base text-text-primary font-body;
+    @apply bg-bg-base text-text-primary font-ui;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    @apply bg-bg-base text-text-primary font-body text-body;
-    line-height: 1.6;
+    @apply bg-bg-base text-text-primary font-ui text-body;
+    line-height: 1.65;
   }
 
   /* ── Typography scale ─────────────────────────────── */
@@ -262,6 +265,38 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* ── Note cards ───────────────────────────────────────────────
+   A card is a surface, so it carries a resting shadow in both themes. In dark
+   mode a slow blue glow marks it as live content; the pulse is deliberately 4s
+   and low-contrast so it reads as breathing, not blinking. */
+.note-card {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.06),
+    0 2px 6px rgb(0 0 0 / 0.05);
+}
+.dark .note-card {
+  animation: note-card-pulse 4s ease-in-out infinite;
+}
+@keyframes note-card-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgb(78 105 199 / 0.22),
+      0 1px 3px rgb(0 0 0 / 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgb(78 105 199 / 0.5),
+      0 6px 18px rgb(78 105 199 / 0.16);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dark .note-card {
+    animation: none;
+    box-shadow: 0 0 0 1px rgb(78 105 199 / 0.35);
+  }
+}
+
 /* ── Note editor ──────────────────────────────────────────────
    ProseMirror owns this DOM, so utilities cannot reach inside it: these rules
    are the minimum needed to make headings, bullets and the placeholder look
@@ -270,8 +305,8 @@
   min-height: 12rem;
   outline: none;
   color: rgb(var(--text-primary));
-  font-size: 0.875rem;
-  line-height: 1.65;
+  font-size: 1rem;
+  line-height: 1.7;
 }
 .folio-note-editor p {
   margin: 0 0 0.5rem;
@@ -301,4 +336,23 @@
   float: left;
   height: 0;
   pointer-events: none;
+}
+/* A study card in the editor: the same left accent the read view draws, so the
+   block is recognisable while editing. Cards are prose, so this is a container
+   of paragraphs -- Enter inside it starts a new line, which is why it is not a
+   single text block. */
+.folio-note-editor [data-kind="card"] {
+  border-left: 2px solid rgb(var(--accent) / 0.6);
+  padding-left: 0.75rem;
+  min-height: 2.75rem;
+}
+.folio-note-editor [data-kind="card"] > p:last-child {
+  margin-bottom: 0;
+}
+/* Cited text in the editor: underline + link colour, matching the read view. */
+.folio-note-editor .note-editor-cited {
+  color: rgb(var(--accent));
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--accent) / 0.6);
+  text-underline-offset: 2px;
 }

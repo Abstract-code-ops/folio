@@ -372,3 +372,163 @@ curl -s "localhost:8000/notes?book_id=0052b432-55e3-4945-9b5c-60e060f2b7b9&limit
 
 Manual path: reader → page 99–103 → Notes tab → "On this section" → open a note →
 Edit → type → wait for "Saved" → Done. Then **New note → Generate from a topic**.
+
+---
+
+## Chat "no reply" saga (this session) — two stacked bugs
+
+**Symptom.** Sending any question — even "hi" — showed the loading dots for a long
+time and then rendered nothing. DevTools Network showed the request completing and
+the body streaming in, so it was not a network failure.
+
+### Assumptions checked and ruled out (in order)
+
+| Assumption | How it was checked | Verdict |
+|---|---|---|
+| Backend erroring on `/qa` | `docker logs folio-api-1` (no traceback) + `curl -N POST /qa/{book}` | fine — streamed tokens → `done` |
+| Schema/migration drift on `qa_message` | `alembic current` | fine — `0006 (head)`, nothing pending |
+| Next `/api/proxy` not streaming | `curl -N POST localhost:3000/api/proxy/qa/{book}` | fine — streamed tokens |
+| Client NDJSON parser broken | Node probe replicating the line-split + `JSON.parse` loop | fine — 351 events / 348 tokens |
+| `folio-web-1` runs the dev server | `docker inspect folio-web-1 --format '{{.Config.Cmd}}'` | it is `[sleep infinity]` — the real dev server is `docker exec`'d inside, so its console is in the SSH terminal, not `docker logs` |
+
+### Root cause #1 — the hang: `async start` ReadableStream producer
+
+`web/lib/api-client.ts` built a `new ReadableStream({ async start(controller) { while (true) { … controller.enqueue(…); } } })`. The async `start` runs a producer loop that races the consumer; against a real, time-varying network body the reader can end up waiting on a stream that closes empty — spinner spins, nothing arrives.
+
+**Evidence** (same live :3000 stream): direct read = 351 events; through the async-start wrapper = **2 events / 489 chars**; through a pull-based wrapper = 265 events. A single-chunk local mock passed (5/5) — which is why the pattern looks fine in trivial tests and only fails on real streaming.
+
+_Note (measured later):_ a synthetic + local-`fetch` benchmark could **not** reproduce the drop, so the per-request loss is stack-specific (Next `TransformStream` proxy + undici + timing) rather than intrinsic. The hang itself was real — this fix is what made chat "faster" — and pull is still the right choice because it bounds memory and cannot race.
+
+**Before** (both `askQuestion` and the shared `ndjson` helper):
+```ts
+return new ReadableStream<T>({
+  async start(controller) {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) { /* flush buffer */ controller.close(); return; }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) { /* controller.enqueue(JSON.parse(line)) */ }
+      }
+    } catch (e) { controller.error(e); }
+  },
+});
+```
+
+**After** — pull-based (one complete line per pull); `askQuestion` now reuses the helper:
+```ts
+return new ReadableStream<T>({
+  async pull(controller) {
+    while (true) {
+      const nl = buffer.indexOf("\n");
+      if (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        try { controller.enqueue(JSON.parse(line) as T); return; } catch { continue; }
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        if (buffer.trim()) { try { controller.enqueue(JSON.parse(buffer) as T); } catch {} }
+        controller.close();
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+    }
+  },
+});
+// and in askQuestion: return this.ndjson<QaEvent>(res.body);
+```
+This also fixed topic-note generation — `generateTopicNotes` used the same helper.
+
+### Root cause #2 — "displays nothing": the store wrote the wrong key
+
+`web/lib/chat-store.ts` — `addMessage` returned the partial state correctly, but four sibling mutators returned the patch **directly**. zustand's `set(fn)` expects `fn` to return the *partial state object*; these returned the `sessions` map itself, so zustand wrote a top-level key literally named after the session id and never updated `sessions`. Result: the user bubble appeared (`addMessage` works) but the AI bubble stayed `""` forever.
+
+**Evidence** — new `web/lib/chat-store.test.ts` failed `expected '' to be 'Hello there'`; passed after the wrap.
+
+**Before:**
+```ts
+appendToken: (id, text) =>
+  set((s) =>
+    patchSession(s.sessions, id, (session) => { /* ... */ }),
+  ),
+```
+
+**After** (same shape applied to `appendToken`, `setCitations`, `setNotCovered`, `applySummary`):
+```ts
+appendToken: (id, text) =>
+  set((s) => ({
+    sessions: patchSession(s.sessions, id, (session) => { /* ... */ }),
+  })),
+```
+
+### Why it fooled us
+
+The two bugs **stacked and masked each other**. #1 (hang) was found first and fixed → "faster now", but still blank. #2 (store key) was the actual "displays nothing". The user's hunch — *"maybe it's a state issue where we are just mutating state"* — was correct; writing a store test in isolation pinpointed it in seconds after browser debugging could not.
+
+### Verification
+
+- `tsc --noEmit` clean.
+- `vitest`: 3 files / 25 tests pass (added `chat-store.test.ts`).
+- Stream probe: pull wrapper delivers the full stream (265 events) vs async-start's 2.
+
+### Rules to carry forward
+
+1. Streamed NDJSON → **pull-based** `ReadableStream`; never an `async start` producer loop.
+2. `set(fn)` in zustand must return the **partial state** (`{ sessions: … }`), not the nested value.
+3. When a bug "got faster but is still wrong", the previous fix landed and there is a *second* bug — keep going.
+4. Store logic is cheap to unit-test; do it before blaming the transport.
+
+---
+
+## Local-first notes sync + server delete (this session)
+
+**Goal (curator):** notes stay a fast local cache, but are written back to the DB and imported per-user — *"calls to db are not removed but reduced."* Writes should happen when the student **finishes editing**, not on every pause.
+
+### What was built
+
+**Backend — one efficient request instead of many**
+- `POST /notes/batch` → `upsert_notes_batch` (`api/app/services/notes.py`): one transaction, **one multi-row `INSERT … ON CONFLICT DO UPDATE` per table** (note_session / note_block / note_link), `content_hash` skip for unchanged blocks, delete-missing for removed rows, `raw_text` + `matched_section_count` computed from the payload (no extra round trips), and an **ownership guard** (a client can't overwrite another user's note). Accepts `notes` **and** `deleted` (server-side delete of owned notes with explicit child cleanup so it works with/without FK cascade).
+- Dialect-aware `_upsert_insert` picks Postgres vs SQLite `ON CONFLICT` from the *session's* dialect, so tests (SQLite/aiosqlite) exercise the real path.
+- The dead write path (`POST /notes/document`, `PUT /notes/{id}/blocks`, `POST /notes`) is now unused by the client but left in place.
+
+**Frontend — client outbox + explicit flush**
+- `web/lib/note-sync.ts`: notes become dirty on store change; flushed on the **editor's Done button** (`flushNoteSyncNow()`), on tab-hidden/`pagehide`, and a 60 s safety backstop. Deletes ride the flush via `pendingDeletes` (short 1.5 s debounce). One write per editing session, not one per debounce tick.
+- `notes-store` gained `pendingDeletes` (append on `deleteNote`, `clearDeletes`); `sync.ts` marks imported notes synced (`markNoteSynced`) so imports aren't re-pushed.
+- Cache-miss import (`syncUserData`) stays duplicate-proof: `toLocalNote` keys by server id, which now equals the local id.
+
+**Schema cleanup (destructive — curator runs it)**
+- Migration `0007_drop_note_link_columns.py` drops `note_link.chunk_id` and `note_link.distance` (the batch flow never writes them; `excerpt_hash` kept). Offline-verified: `alembic heads` = `0007`, `alembic upgrade 0006:0007 --sql` renders both `DROP COLUMN`s. **Not applied** — run `docker exec folio-api-1 python3 -m alembic upgrade head`.
+
+**Dev visibility**
+- `web/lib/request-counter.ts` counts every `/api/proxy` request; `window.__folioDbCalls` + `window.__folioReset()`, `console.debug('[folio] DB call #N …')`, and `apiClient.dbCalls`.
+- `web/components/debug/db-call-badge.tsx` — a **temporary** on-screen `DB N` pill (bottom-left, tap to reset), mounted in `app/layout.tsx`. Remove the file + its two `layout.tsx` references when done.
+
+### Design decisions
+- **Flush on Done, not debounce** (curator's call). Compared state-subscription (flush when `editing→false`) vs an explicit button: the button (`NoteEditor.handleDone`) already existed, is direct, and one tap = one write; the state-watch also missed tab-switch-mid-edit. Safety net covers the non-button exits.
+- **Batching over faster writes.** The DB round trip is ~1 s, so the lever is *fewer requests*, not faster SQL — hence one batch request per flush with multi-row upserts.
+
+### Verification
+- Backend: `pytest tests/services/test_note_document.py tests/services/test_notes_batch.py` → **28 passed** (incl. insert/idempotent-replay/update+drop/link-preserve/owner-guard/delete/delete-ignores-other-user).
+- Frontend: `npm test` → **32 passed** (added `note-sync.test.ts`: coalesce, safety-only (no per-edit flush), on-demand, empty-guard, retry, delete, toBatchNote).
+- `tsc --noEmit` clean. Migration offline-verified only.
+- **Not browser-verified** (curator's dev server): confirm one edit-session = one `POST /notes/batch` via the `DB N` badge; confirm a deleted note doesn't reappear after refresh.
+
+### Known gaps / follow-ups
+- Mobile-sheet close / panel collapse **without** tapping Done doesn't flush immediately (local persist + `pagehide`/backstop cover it). Could wire the sheet's X the same way.
+- Deletes are now real server deletes (curator reversed the earlier "no DELETE" decision).
+- `alembic upgrade head` for `0007` still to be run by the curator.
+- Debug badge + request counter are temporary; strip before shipping.
+
+---
+
+## Next steps (what's queued next)
+
+The local-first notes work + the chat "no reply" fix are done. Next up, in the curator's order:
+
+1. **Auth integration (Better Auth).** Replace the anonymous `get_current_user` fallback with real session sign-in. The per-user plumbing is already correct: every note/chat endpoint is `user_id`-scoped, and the cache-miss import (`syncUserData`) pulls *that user's* notes/chat — so once a real user id exists it "just works." Work to do: auth provider wiring (Better Auth session table already referenced in `models/qa_message.py` and `core/auth.py`), sign-in/out UI, gating `/reader`, and confirming the note/chat sync keys off the authenticated user (not the shared anonymous id).
+2. **Improve chat responses.** Known levers already documented: the routing prompt (typos/abbreviations), retrieval quality (pgvector `<=>` + Nomic/Ollama embeddings), the answer prompt & grounding invariant (protected — do not weaken citations), `qa_answer_max_tokens` output cap, provider resilience (VoidAI 520/ReadTimeout retries), and the "diagrams/figures" direction still awaiting a go-ahead (approach A: pymupdf figure crop + cite; B: Gemini captions + embed; C: ColPali vision embeddings — deferred).
+3. **Carry-overs:** browser-verify the note-sync + citation flows; run migration `0007`; remove the debug badge/counter; decide on dropping the now-idle `note_session.raw_text`/`status`/`matched_section_count` (kept — still written) and the dead per-note endpoints.

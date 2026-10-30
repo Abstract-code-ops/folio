@@ -4,14 +4,18 @@ import type { BookListResponse, BookResponse, IngestionStatus } from "@/types/bo
 import type { CoverageMapResponse } from "@/types/coverage";
 import type {
   GeneratedSectionNotes,
+  NoteBatchNote,
   NoteBlockDraft,
   NoteDetail,
   NoteSessionListResponse,
   NoteSessionResponse,
   NoteSource,
   NoteTopicEvent,
-} from "@/types/notes";import type { QaEvent, SummarizeResponse } from "@/types/chat";
+  UpsertNotesBatchResponse,
+} from "@/types/notes";
+import type { QaEvent, SummarizeResponse } from "@/types/chat";
 import type { QaTurnListResponse } from "@/types/qa-turns";
+import { getRequestCount, installRequestCounter } from "./request-counter";
 
 // Use a relative proxy URL so the browser talks to Next.js (same origin),
 // which forwards to the FastAPI backend inside the Docker network.
@@ -25,7 +29,12 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  // ── Books ──────────────────────────────────────────────────
+  /** API requests made this session (dev visibility; see request-counter). */
+  get dbCalls(): number {
+    return getRequestCount();
+  }
+
+  // ──────────────────────────────────────────────────
 
   async listBooks(options?: {
     status?: IngestionStatus;
@@ -107,46 +116,7 @@ class ApiClient {
       throw new Error("Response body is null — streaming not supported");
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    return new ReadableStream<QaEvent>({
-      async start(controller) {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              if (buffer.trim()) {
-                try {
-                  controller.enqueue(JSON.parse(buffer));
-                } catch {
-                  // skip malformed trailing data
-                }
-              }
-              controller.close();
-              return;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-              try {
-                const parsed = JSON.parse(trimmed) as QaEvent;
-                controller.enqueue(parsed);
-              } catch {
-                // skip malformed lines
-              }
-            }
-          }
-        } catch (e) {
-          controller.error(e);
-        }
-      },
-    });
+    return this.ndjson<QaEvent>(res.body);
   }
 
   // ── Notes ───────────────────────────────────────────────────
@@ -246,8 +216,7 @@ class ApiClient {
     return res.json() as Promise<NoteDetail>;
   }
 
-  async getNote(noteId: string): Promise<NoteDetail> {
-    const url = `${this.baseUrl}/notes/${noteId}`;
+  async getNote(noteId: string): Promise<NoteDetail> {    const url = `${this.baseUrl}/notes/${noteId}`;
     const res = await fetch(url);
     if (res.status === 404) {
       throw new Error("Note not found");
@@ -290,39 +259,39 @@ class ApiClient {
     let buffer = "";
 
     return new ReadableStream<T>({
-      async start(controller) {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              // Flush whatever is left in the buffer.
-              if (buffer.trim()) {
-                try {
-                  controller.enqueue(JSON.parse(buffer) as T);
-                } catch {
-                  // skip malformed trailing data
-                }
-              }
-              controller.close();
+      // Pull-based, NOT an async `start` producer. A `start` that loops and
+      // enqueues races the consumer on a real, time-varying network stream: the
+      // reader can end up waiting on a stream that closes empty (a spinner that
+      // never resolves, then no output). `pull` fires only when the consumer
+      // wants a chunk, so emitting one complete line per pull keeps
+      // backpressure correct and never starves the reader.
+      async pull(controller) {
+        while (true) {
+          const newline = buffer.indexOf("\n");
+          if (newline >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line) continue;
+            try {
+              controller.enqueue(JSON.parse(line) as T);
               return;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            // Keep the last (potentially incomplete) line in the buffer.
-            buffer = lines.pop() ?? "";
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-              try {
-                controller.enqueue(JSON.parse(trimmed) as T);
-              } catch {
-                // skip malformed lines (e.g. error placeholders)
-              }
+            } catch {
+              continue; // skip a malformed line, keep the stream alive
             }
           }
-        } catch (e) {
-          controller.error(e);
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buffer.trim()) {
+              try {
+                controller.enqueue(JSON.parse(buffer) as T);
+              } catch {
+                // skip malformed trailing data
+              }
+            }
+            controller.close();
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
         }
       },
     });
@@ -347,6 +316,22 @@ class ApiClient {
     return this.ndjson<NoteTopicEvent>(res.body);
   }
 
+  async upsertNotesBatch(
+    notes: NoteBatchNote[],
+    deleted: string[] = [],
+  ): Promise<UpsertNotesBatchResponse> {
+    const url = `${this.baseUrl}/notes/batch`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes, deleted }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to sync notes: ${res.statusText}`);
+    }
+    return res.json() as Promise<UpsertNotesBatchResponse>;
+  }
+
   async getBook(bookId: string, loadSections?: boolean): Promise<BookResponse> {
     const params = loadSections ? "?load_sections=true" : "";
     const url = `${this.baseUrl}/books/${bookId}${params}`;
@@ -364,3 +349,9 @@ class ApiClient {
 
 export const apiClient = new ApiClient();
 export { ApiClient };
+
+// Dev-only: count every proxied request so a session's DB-call total is visible
+// in the console (and on window.__folioDbCalls / __folioReset()).
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "test") {
+  installRequestCounter();
+}

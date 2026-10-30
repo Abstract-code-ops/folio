@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { DbCallBadge } from "@/components/debug/db-call-badge";
 import { caveat } from "@/lib/fonts";
 
 export const metadata: Metadata = {
@@ -31,6 +32,7 @@ export default function RootLayout({
         />
         {children}
         <ThemeToggle />
+        <DbCallBadge />
       </body>
     </html>
   );

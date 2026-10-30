@@ -25,6 +25,7 @@ from app.models.note_session import NoteSource
 from app.models.section import Section
 from app.pipeline.note_gen import generate_section_notes
 from app.services.notes import (
+    NoteBatchNote,
     NoteBlockDraft,
     NoteDetailResponse,
     NoteSessionListResponse,
@@ -35,6 +36,7 @@ from app.services.notes import (
     list_note_sessions,
     list_notes_for_section,
     replace_note_blocks,
+    upsert_notes_batch,
 )
 from app.services.note_topic import stream_topic_note
 
@@ -200,6 +202,36 @@ async def post_note_document(
     )
 
 
+class UpsertNotesBatchRequest(BaseModel):
+    """Request body for ``POST /notes/batch`` -- the write-behind flush."""
+
+    notes: list[NoteBatchNote] = []
+    deleted: list[uuid.UUID] = []
+
+
+@router.post("/batch")
+async def post_notes_batch(
+    body: UpsertNotesBatchRequest,
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """Upsert many notes' current state in one transaction (local-first sync).
+
+    The client flushes its dirty notes here on a debounce; each note carries its
+    full block list and client ids, so the write is idempotent and one request
+    replaces N per-note saves.
+    """
+    synced = await upsert_notes_batch(
+        db, user_id=user_id, notes=body.notes, deleted=body.deleted
+    )
+    return {
+        "synced": [
+            {"id": str(note_id), "updated_at": ts.isoformat()}
+            for note_id, ts in synced
+        ]
+    }
+
+
 @router.get("/{note_id}", response_model=NoteDetailResponse)
 async def get_note(
     note_id: uuid.UUID,
@@ -239,7 +271,6 @@ async def put_note_blocks(
 
 
 # ── Topic notes ────────────────────────────────────────────────
-
 
 class GenerateTopicRequest(BaseModel):
     """Request body for ``POST /notes/topic``."""

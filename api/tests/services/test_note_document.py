@@ -37,13 +37,11 @@ def _link(
     status: LinkStatus = LinkStatus.ACCEPTED,
 ) -> NoteLinkDraft:
     return NoteLinkDraft(
-        chunk_id=uuid.uuid4(),
         section_id=section_id,
         anchor_heading_path="Storage engines > B-trees",
         page_start=79,
         page_end=80,
         excerpt=excerpt,
-        distance=0.21,
         origin=LinkOrigin.GENERATED,
         status=status,
     )

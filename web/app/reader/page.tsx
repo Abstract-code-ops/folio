@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState, useCallback } from "react";import { useSearchParams } from "next/navigation";
-import { Brain, MessageSquare, FileText } from "lucide-react";
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";import { useSearchParams } from "next/navigation";
+import { Brain, Contrast, MessageSquare, FileText, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import dynamicImport from "next/dynamic";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
@@ -19,11 +19,16 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { apiClient } from "@/lib/api-client";
 import { useChatStore } from "@/lib/chat-store";
+import { useCiteBridge } from "@/lib/cite-bridge";
+import { makeLocalNote, useNotesNav, useNotesStore, type LocalLink } from "@/lib/notes-store";
+import { syncUserData } from "@/lib/sync";
+import { startNoteSync } from "@/lib/note-sync";
 import type { BookResponse } from "@/types/books";
-import type { HighlightTarget } from "@/components/reader/PdfViewer";
+import type { HighlightTarget, PdfSelection } from "@/components/reader/PdfViewer";
 
 const PdfViewer = dynamicImport(
   () => import("@/components/reader/PdfViewer").then((m) => m.PdfViewer),
@@ -56,19 +61,27 @@ function PanelContent({
   bookId,
   sectionId,
   sectionHeading,
+  suggestions,
   onCitationClick,
 }: {
   activeTab: TabId;
   bookId: string;
   sectionId?: string;
   sectionHeading?: string;
+  suggestions?: string[];
   onCitationClick: (target: { page: number; text: string }) => void;
 }) {
   if (activeTab === "coverage") {
     return <ComingSoon />;
   }
   if (activeTab === "chat") {
-    return <ChatPanel bookId={bookId} onCitationClick={onCitationClick} />;
+    return (
+      <ChatPanel
+        bookId={bookId}
+        suggestions={suggestions}
+        onCitationClick={onCitationClick}
+      />
+    );
   }
   return (
     <NotesPanel
@@ -77,6 +90,98 @@ function PanelContent({
       sectionHeading={sectionHeading}
       onCitationClick={onCitationClick}
     />
+  );
+}
+
+// ── PDF selection menu ─────────────────────────────────────────
+
+function SelectionMenuBar({
+  selection,
+  notes,
+  onAskChat,
+  onNewNote,
+  onExistingNote,
+  onClose,
+}: {
+  selection: PdfSelection;
+  notes: { id: string; title: string | null }[];
+  onAskChat: (sel: PdfSelection) => void;
+  onNewNote: (sel: PdfSelection) => void;
+  onExistingNote: (noteId: string, sel: PdfSelection) => void;
+  onClose: () => void;
+}) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+
+  const action = "min-h-11 rounded-md px-3 py-1.5 text-body-sm transition-colors sm:min-h-0";
+
+  return (
+    <div
+      onClick={(event) => event.stopPropagation()}
+      className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 p-3"
+    >
+      <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-surface p-1 shadow-xl">
+        {!addOpen && !picking && (
+          <>
+            <button
+              onClick={() => onAskChat(selection)}
+              className={`${action} bg-accent text-white hover:bg-accent-hover`}
+            >
+              Ask chat
+            </button>
+            <button
+              onClick={() => setAddOpen(true)}
+              className={`${action} text-text-primary hover:bg-bg-elevated`}
+            >
+              Add to note
+            </button>
+          </>
+        )}
+
+        {addOpen && !picking && (
+          <>
+            <button
+              onClick={() => onNewNote(selection)}
+              className={`${action} bg-accent text-white hover:bg-accent-hover`}
+            >
+              New note
+            </button>
+            <button
+              onClick={() => setPicking(true)}
+              className={`${action} text-text-primary hover:bg-bg-elevated`}
+            >
+              Existing note
+            </button>
+          </>
+        )}
+
+        <button
+          onClick={onClose}
+          aria-label="Dismiss"
+          className="min-h-11 min-w-11 rounded-md px-2 text-text-subtle hover:bg-bg-elevated hover:text-text-primary sm:min-h-0"
+        >
+          ×
+        </button>
+      </div>
+
+      {picking && (
+        <div className="max-h-48 w-full max-w-sm overflow-y-auto rounded-lg border border-border bg-bg-surface p-1 shadow-xl">
+          {notes.length === 0 ? (
+            <p className="px-3 py-2 text-body-sm text-text-muted">No notes yet.</p>
+          ) : (
+            notes.map((note) => (
+              <button
+                key={note.id}
+                onClick={() => onExistingNote(note.id, selection)}
+                className="block w-full truncate rounded px-3 py-2 text-left text-body-sm text-text-primary hover:bg-bg-elevated"
+              >
+                {note.title ?? "Untitled note"}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -91,6 +196,21 @@ function ReaderContent() {
   const [bookLoading, setBookLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  // Chrome hides on a tap in the page area and returns on the next one: the
+  // reading surface is the point, the bars are furniture.
+  const [chromeHidden, setChromeHidden] = useState(false);
+  // Dim rather than invert: inverting a PDF wrecks its figures and images.
+  const [dim, setDim] = useState(false);
+  // Desktop panel collapse. The reader is the point, so the panel can get out of
+  // the way entirely. The panel is a resizable pane, so it keeps its width when
+  // open; the toggle drives its imperative handle rather than tearing down the
+  // whole group, and the trigger carries aria-controls for that region.
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const panelRef = useRef<ImperativePanelHandle>(null);
+  const togglePanel = useCallback(() => {
+    if (panelCollapsed) panelRef.current?.expand();
+    else panelRef.current?.collapse();
+  }, [panelCollapsed]);
   const [activeTab, setActiveTab] = useState<TabId>("coverage");
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
@@ -109,14 +229,25 @@ function ReaderContent() {
     return () => { cancelled = true; };
   }, [bookId]);
 
-  // Clear this book's chat when leaving the reader (navigate away or switch
-  // books), so each book session starts fresh. Tab switches within the reader
-  // do not unmount, so the chat persists across them.
+  // Cache-miss sync: on first open of a book, pull the current user's notes and
+  // chat history from the server; afterwards local is the cache. Auth-scoped
+  // server-side, so this is "the user's data", not everyone's.
   useEffect(() => {
-    return () => {
-      useChatStore.getState().resetChat(bookId);
-    };
+    if (!bookId) return;
+    startNoteSync();
+    void syncUserData(bookId);
   }, [bookId]);
+
+  // Open where reading begins. Page 1 is the cover and copyright page in most
+  // books, which is chrome, not reading; the first chapter-level section is where
+  // a student actually starts. Runs once per book, so a page the student chose is
+  // never overridden.
+  const openedAtStart = useRef(false);  useEffect(() => {
+    if (openedAtStart.current || !book?.sections?.length) return;
+    openedAtStart.current = true;
+    const firstChapter = book.sections.find((section) => section.level >= 1);
+    if (firstChapter) setCurrentPage(firstChapter.page_start);
+  }, [book]);
 
   // A citation click both jumps to its page and asks the viewer to highlight
   // the cited text. Highlight lives in state so re-clicking the same citation
@@ -128,6 +259,126 @@ function ReaderContent() {
       setHighlight({ page, text });
     },
     [],
+  );
+
+  // PDF text selection drives two things: a cite in flight (resolved here into a
+  // link) and, otherwise, the "Ask chat / Add to note" menu.
+  const [pdfSelection, setPdfSelection] = useState<PdfSelection | null>(null);
+  const notes = useNotesStore((s) => s.notes);
+  const bookNotes = useMemo(
+    () =>
+      Object.values(notes)
+        .filter((note) => note.bookId === bookId)
+        .map((note) => ({ id: note.id, title: note.title })),
+    [notes, bookId],
+  );
+
+  const sectionAtPage = useCallback(
+    (page: number) => {
+      const sections = book?.sections;
+      if (!sections || sections.length === 0) return null;
+      const containing = sections.filter(
+        (section) => page >= section.page_start && page <= section.page_end,
+      );
+      if (containing.length === 0) return null;
+      return containing.sort(
+        (a, b) =>
+          a.page_end - a.page_start - (b.page_end - b.page_start) ||
+          b.level - a.level,
+      )[0];
+    },
+    [book],
+  );
+
+  const linkFor = useCallback(
+    (sel: PdfSelection, quote?: string | null): LocalLink => {
+      const section = sectionAtPage(sel.page);
+      return {
+        id: crypto.randomUUID(),
+        section_id: section?.id ?? null,
+        anchor_heading_path: section?.heading ?? `p. ${sel.page}`,
+        page_start: sel.page,
+        page_end: sel.page,
+        excerpt: sel.text,
+        quote: quote ?? undefined,
+        status: "accepted",
+        origin: "manual",
+      };
+    },
+    [sectionAtPage],
+  );
+
+  const onSelection = useCallback(
+    (sel: PdfSelection | null) => {
+      if (!sel) {
+        setPdfSelection(null);
+        return;
+      }
+      const request = useCiteBridge.getState().citeRequest;
+      if (request) {
+        useCiteBridge.getState().setResolvedLink({
+          noteId: request.noteId,
+          blockId: request.blockId,
+          link: linkFor(sel, request.quote),
+        });
+        useCiteBridge.getState().setCiteRequest(null);
+        return;
+      }
+      setPdfSelection(sel);
+    },
+    [linkFor],
+  );
+
+  const askChat = useCallback(
+    (sel: PdfSelection) => {
+      const store = useChatStore.getState();
+      store.createSession(bookId);
+      store.setPendingSeed(
+        bookId,
+        `Explain this passage and what it means in this book:\n\n"${sel.text}"`,
+      );
+      setActiveTab("chat");
+      setPdfSelection(null);
+    },
+    [bookId],
+  );
+
+  const addToNewNote = useCallback(
+    (sel: PdfSelection) => {
+      const note = makeLocalNote(bookId, {
+        blocks: [
+          {
+            id: crypto.randomUUID(),
+            kind: "paragraph",
+            text: sel.text,
+            origin: "typed",
+            links: [linkFor(sel)],
+          },
+        ],
+      });
+      useNotesStore.getState().saveNote(note);
+      useNotesNav.getState().open(bookId, note.id);
+      useNotesNav.getState().setEditing(bookId, true);
+      setActiveTab("notes");
+      setPdfSelection(null);
+    },
+    [bookId, linkFor],
+  );
+
+  const addToExistingNote = useCallback(
+    (noteId: string, sel: PdfSelection) => {
+      useNotesStore.getState().appendBlock(noteId, {
+        id: crypto.randomUUID(),
+        kind: "paragraph",
+        text: sel.text,
+        origin: "typed",
+        links: [linkFor(sel)],
+      });
+      useNotesNav.getState().open(bookId, noteId);
+      setActiveTab("notes");
+      setPdfSelection(null);
+    },
+    [bookId, linkFor],
   );
 
   // Which section the current page is in, resolved from the section map that
@@ -148,6 +399,17 @@ function ReaderContent() {
         b.level - a.level,
     )[0];
   }, [book, currentPage]);
+
+  // Example questions for the chat empty state, built from the book's own
+  // chapter headings so they are answerable from this book by construction.
+  const chatSuggestions = useMemo(
+    () =>
+      (book?.sections ?? [])
+        .filter((section) => section.level >= 1)
+        .slice(0, 3)
+        .map((section) => `What is "${section.heading}" about?`),
+    [book],
+  );
   // ── Error state ─────────────────────────────────────────────
   if (error || !bookId) {
     return (
@@ -182,7 +444,21 @@ function ReaderContent() {
       <div className="h-screen flex flex-col bg-bg-base">
         {/* Top bar — breadcrumb */}
         <div className="flex items-center gap-3 px-4 h-12 border-b border-border-subtle bg-bg-surface shrink-0">
-          <a href="/library" className="text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+          <button
+            type="button"
+            onClick={togglePanel}
+            aria-expanded={!panelCollapsed}
+            aria-controls="study-panel"
+            aria-label={panelCollapsed ? "Show study panel" : "Hide study panel"}
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted transition-colors hover:text-text-primary shrink-0"
+          >
+            {panelCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" strokeWidth={1.5} />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" strokeWidth={1.5} />
+            )}
+          </button>
+          <a href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
             ← Library
           </a>
           <span className="text-text-subtle">/</span>
@@ -196,41 +472,52 @@ function ReaderContent() {
           direction="horizontal"
           className="flex-1 min-h-0"
         >
-          {/* Tabs + panel content */}
+          {/* Tabs + panel content. Collapsible to zero so the reader takes the
+              freed width; the top-bar trigger drives it via aria-controls. */}
           <ResizablePanel
+            ref={panelRef}
             defaultSize={22}
             minSize={15}
             maxSize={50}
+            collapsible
+            collapsedSize={0}
+            onCollapse={() => setPanelCollapsed(true)}
+            onExpand={() => setPanelCollapsed(false)}
             className="bg-bg-surface"
           >
-            <div className="flex h-full min-h-0 flex-col">
-              <Tabs
-                value={activeTab}
-                onValueChange={(v) => setActiveTab(v as TabId)}
-                className="shrink-0 px-3 py-2 border-b border-border-subtle"
-              >
-                <TabsList className="w-full bg-bg-elevated border border-border">
-                  {ALL_TABS.map(({ id, icon: Icon, label }) => (
-                    <TabsTrigger
-                      key={id}
-                      value={id}
-                      className="flex-1 data-[state=active]:bg-bg-surface data-[state=active]:text-text-primary text-text-muted text-body-sm"
-                    >
-                      <Icon className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.5} />
-                      {label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <PanelContent
-                  activeTab={activeTab}
-                  bookId={bookId}
-                  sectionId={currentSection?.id}
-                  sectionHeading={currentSection?.heading}
-                  onCitationClick={handleCitationClick}
-                />
-              </div>
+            <div id="study-panel" className="flex h-full min-h-0 flex-col">
+              {!panelCollapsed && (
+                <>
+                  <Tabs
+                    value={activeTab}
+                    onValueChange={(v) => setActiveTab(v as TabId)}
+                    className="shrink-0 px-3 py-2 border-b border-border-subtle"
+                  >
+                    <TabsList className="w-full bg-bg-elevated border border-border p-1">
+                      {ALL_TABS.map(({ id, icon: Icon, label }) => (
+                        <TabsTrigger
+                          key={id}
+                          value={id}
+                          className="flex-1 min-h-11 px-3 py-2 data-[state=active]:bg-bg-surface data-[state=active]:text-text-primary text-text-muted text-body-sm"
+                        >
+                          <Icon className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.5} />
+                          {label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                  <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+                    <PanelContent
+                      activeTab={activeTab}
+                      bookId={bookId}
+                      sectionId={currentSection?.id}
+                      sectionHeading={currentSection?.heading}
+                      suggestions={chatSuggestions}
+                      onCitationClick={handleCitationClick}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </ResizablePanel>
 
@@ -241,13 +528,24 @@ function ReaderContent() {
 
           {/* PDF Viewer */}
           <ResizablePanel defaultSize={78} minSize={50}>
-            <main className="flex h-full flex-col bg-bg-reader min-w-0">
+            <main className="relative flex h-full flex-col bg-bg-reader min-w-0">
               <PdfViewer
                 url={book.storage_url}
                 pageNumber={currentPage}
                 onPageChange={setCurrentPage}
                 highlight={highlight}
+                onSelection={onSelection}
               />
+              {pdfSelection && (
+                <SelectionMenuBar
+                  selection={pdfSelection}
+                  notes={bookNotes}
+                  onAskChat={askChat}
+                  onNewNote={addToNewNote}
+                  onExistingNote={addToExistingNote}
+                  onClose={() => setPdfSelection(null)}
+                />
+              )}
             </main>
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -259,28 +557,59 @@ function ReaderContent() {
   return (
     <div className="h-dvh flex flex-col bg-bg-base">
       {/* Top bar */}
-      <div className="flex items-center gap-2 px-4 h-10 border-b border-border-subtle bg-bg-surface shrink-0">
-        <a href="/library" className="text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+      <div
+        className={`flex items-center gap-2 px-4 h-10 border-b border-border-subtle bg-bg-surface shrink-0 transition-opacity motion-reduce:transition-none ${chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
+      >
+        <a href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
           ← Library
         </a>
         <span className="text-text-subtle">/</span>
+        <h1 className="sr-only">{book.title}</h1>
         <span className="text-body-sm text-text-muted truncate">{book.title}</span>
-        <span className="text-body-sm text-text-subtle ml-auto">p. {currentPage}</span>
+        <button
+          onClick={() => setDim((value) => !value)}
+          aria-pressed={dim}
+          aria-label="Dim the page"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-subtle transition-colors hover:text-text-primary"
+        >
+          <Contrast className="h-4 w-4" strokeWidth={1.5} />
+        </button>
+        <span
+          role="status"
+          aria-live="polite"
+          className="text-body-sm text-text-subtle ml-auto"
+        >
+          p. {currentPage}
+        </span>
       </div>
 
       {/* PDF Viewer */}
-      <main className="flex-1 flex flex-col bg-bg-reader min-h-0">
+      <main
+        onClick={() => setChromeHidden((hidden) => !hidden)}
+        className={`relative flex-1 flex flex-col bg-bg-reader min-h-0 transition-[filter] motion-reduce:transition-none ${dim ? "brightness-[0.85]" : ""}`}
+      >
         <PdfViewer
           url={book.storage_url}
           pageNumber={currentPage}
           onPageChange={setCurrentPage}
           highlight={highlight}
+          onSelection={onSelection}
         />
+        {pdfSelection && (
+          <SelectionMenuBar
+            selection={pdfSelection}
+            notes={bookNotes}
+            onAskChat={askChat}
+            onNewNote={addToNewNote}
+            onExistingNote={addToExistingNote}
+            onClose={() => setPdfSelection(null)}
+          />
+        )}
       </main>
 
       {/* Bottom navigation — opens Sheet */}
       <nav
-        className="flex items-center justify-around bg-bg-surface border-t border-border-subtle shrink-0"
+        className={`flex items-center justify-around bg-bg-surface border-t border-border-subtle shrink-0 transition-opacity motion-reduce:transition-none ${chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
         style={{
           height: "calc(3.5rem + env(safe-area-inset-bottom))",
           paddingBottom: "env(safe-area-inset-bottom)",
@@ -301,19 +630,20 @@ function ReaderContent() {
             </SheetTrigger>
             <SheetContent
               side="bottom"
-              className="bg-bg-surface border-t border-border-subtle text-text-primary h-[90vh] flex flex-col"
+              className="bg-bg-surface border-t border-border-subtle text-text-primary h-[90vh] flex flex-col min-h-0"
             >
               <SheetHeader className="shrink-0">
                 <SheetTitle className="text-text-primary font-heading text-body-sm font-semibold">
                   {label}
                 </SheetTitle>
               </SheetHeader>
-              <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
                 <PanelContent
                   activeTab={id}
                   bookId={bookId}
                   sectionId={currentSection?.id}
                   sectionHeading={currentSection?.heading}
+                  suggestions={chatSuggestions}
                   onCitationClick={(target) => {
                     handleCitationClick(target);
                     setMobileSheetOpen(false);

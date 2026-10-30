@@ -15,12 +15,20 @@ export interface HighlightTarget {
   text: string;
 }
 
+export interface PdfSelection {
+  text: string;
+  /** 1-based page the selection starts on. */
+  page: number;
+}
+
 export interface PdfViewerProps {
   url: string | null;
   pageNumber: number;
   onPageChange: (page: number) => void;
   /** Set when a chat citation is clicked; cleared or replaced on the next one. */
   highlight?: HighlightTarget | null;
+  /** Called when the user selects text in the PDF (null when cleared). */
+  onSelection?: (selection: PdfSelection | null) => void;
   className?: string;
 }
 
@@ -43,6 +51,29 @@ interface SearchCapabilityLike {
   getState(): SearchStateLike;
   setShowAllResults(showAll: boolean): void;
   goToResult(index: number): number;
+}
+
+// ── EmbedPDF selection plugin ─────────────────────────────────
+
+interface GlyphPointerLike {
+  page: number;
+  index: number;
+}
+
+interface SelectionEventLike {
+  documentId: string;
+  selection: { start: GlyphPointerLike; end: GlyphPointerLike } | null;
+  modeId: string;
+}
+
+interface FormattedSelectionLike {
+  pageIndex: number;
+}
+
+interface SelectionCapabilityLike {
+  onSelectionChange(cb: (event: SelectionEventLike) => void): unknown;
+  getSelectedText(documentId?: string): { toPromise(): Promise<string[]> };
+  getFormattedSelection(documentId?: string): FormattedSelectionLike[];
 }
 
 /**
@@ -79,11 +110,14 @@ export function PdfViewer({
   pageNumber,
   onPageChange,
   highlight,
+  onSelection,
   className,
 }: PdfViewerProps) {
   const scrollRef = useRef<ScrollCapability | null>(null);
   const searchRef = useRef<SearchCapabilityLike | null>(null);
   const lastReportedPage = useRef<number | null>(null);
+  const onSelectionRef = useRef(onSelection);
+  onSelectionRef.current = onSelection;
 
   // Proxy the PDF through Next.js so the WASM engine fetches it same-origin
   const proxiedUrl = url ? `/api/pdf?url=${encodeURIComponent(url)}` : null;
@@ -106,6 +140,33 @@ export function PdfViewer({
         .getPlugin("search")
         ?.provides?.() as SearchCapabilityLike | undefined;
       if (search) searchRef.current = search;
+
+      // Text selection → the parent renders the "Ask chat / Add to note" menu
+      // or, when a cite is in flight, attaches a citation.
+      const selection = registry
+        .getPlugin("selection")
+        ?.provides?.() as SelectionCapabilityLike | undefined;
+      if (selection) {
+        selection.onSelectionChange((event) => {
+          const sel = event.selection;
+          if (!sel) {
+            onSelectionRef.current?.(null);
+            return;
+          }
+          void (async () => {
+            try {
+              const text = (
+                await selection.getSelectedText(event.documentId).toPromise()
+              ).join(" ");
+              const formatted = selection.getFormattedSelection(event.documentId);
+              const pageIndex = formatted[0]?.pageIndex ?? sel.start.page;
+              onSelectionRef.current?.({ text, page: pageIndex + 1 });
+            } catch {
+              onSelectionRef.current?.(null);
+            }
+          })();
+        });
+      }
     },
     [onPageChange],
   );

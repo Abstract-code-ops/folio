@@ -1,13 +1,11 @@
 """Topic → note orchestration.
 
-Retrieval, generation, validation and persistence in one pass, streamed as
-events so the panel can show cards while the model is still writing. The
-business logic lives here and the router just wraps the stream, which keeps the
-route handler thin.
+Retrieval, generation and validation in one pass, streamed as events so the
+panel can show cards while the model is still writing. The business logic lives
+here and the router just wraps the stream, which keeps the route handler thin.
 
-A note produced this way is an ordinary note document: one `card` block per
-generated card, each with the links its sources justify. Reopening it later goes
-through the same read path as any other note.
+Notes are local now: nothing is persisted here. The validated blocks are handed
+back in the ``done`` event and the client stores them.
 """
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.note_block import BlockKind, BlockOrigin
 from app.models.note_link import LinkOrigin
-from app.models.note_session import NoteSource
 from app.pipeline.note_topic import (
     GeneratedTopicCard,
     GeneratedTopicNotes,
@@ -36,7 +33,6 @@ from app.pipeline.note_topic import (
 from app.services.notes import (
     NoteBlockDraft,
     NoteLinkDraft,
-    create_note_with_blocks,
 )
 from app.services.retrieval import (
     Hit,
@@ -279,28 +275,16 @@ async def stream_topic_note(
         yield {"type": "not_covered", "message": NOT_COVERED_MESSAGE}
         return
 
-    try:
-        detail = await create_note_with_blocks(
-            db,
-            user_id=user_id,
-            book_id=book_id,
-            blocks=blocks,
-            source=NoteSource.AI_GENERATED,
-            title=notes.title,
-        )
-    except Exception:
-        logger.exception("failed to persist the topic note for %r", topic)
-        yield {
-            "type": "error",
-            "message": "The notes were generated but couldn't be saved.",
-        }
-        return
-
+    # Notes are local now: hand the validated blocks back for the client to
+    # store, rather than persisting a row. `id` is excluded — the client
+    # generates its own block ids (links attach to them).
     yield {
         "type": "done",
-        "note_id": str(detail.id),
-        "title": detail.title,
+        "title": notes.title,
         "sections": len(
             {link.section_id for block in blocks for link in block.links}
         ),
+        "blocks": [
+            block.model_dump(mode="json", exclude={"id"}) for block in blocks
+        ],
     }

@@ -13,6 +13,9 @@ const config: Config = {
       fontFamily: {
         heading: ["Nunito", "sans-serif"],
         body: ["Lora", "serif"],
+        // App surfaces (library, reader, notes, chat) use a screen-optimised sans.
+        // The landing page keeps `font-body` (Lora serif) for its book/paper feel.
+        ui: ["Inter", "system-ui", "sans-serif"],
       },
       fontSize: {
         /* Modular scale 1.25 (major third) */

@@ -53,7 +53,6 @@ export type LinkStatus = "suggested" | "accepted" | "dismissed";export type Link
 /** A stored link: what a citation chip renders and where it jumps to. */
 export interface NoteLink {
   id: string;
-  chunk_id: string | null;
   section_id: string | null;
   anchor_heading_path: string;
   page_start: number;
@@ -89,13 +88,11 @@ export interface NoteDetail {
 
 /** A link as submitted — the server derives the excerpt hash itself. */
 export interface NoteLinkDraft {
-  chunk_id?: string | null;
   section_id?: string | null;
   anchor_heading_path: string;
   page_start: number;
   page_end: number;
   excerpt: string;
-  distance?: number | null;
   origin: LinkOrigin;
   status?: LinkStatus;
 }
@@ -112,6 +109,39 @@ export interface NoteBlockDraft {
   links?: NoteLinkDraft[];
 }
 
+/** A link as the local store flushes it to the server (client id, no server-only fields). */
+export interface NoteBatchLink {
+  id: string;
+  section_id: string | null;
+  anchor_heading_path: string;
+  page_start: number;
+  page_end: number;
+  excerpt: string;
+  status: LinkStatus;
+  origin: LinkOrigin;
+}
+
+export interface NoteBatchBlock {
+  id: string;
+  kind: BlockKind;
+  text: string;
+  origin: BlockOrigin;
+  links: NoteBatchLink[];
+}
+
+/** One note's full current state, as flushed by the local-first sync engine. */
+export interface NoteBatchNote {
+  id: string;
+  book_id: string;
+  title: string | null;
+  source: NoteSource;
+  blocks: NoteBatchBlock[];
+}
+
+export interface UpsertNotesBatchResponse {
+  synced: { id: string; updated_at: string }[];
+}
+
 /** Events streamed while a note is generated from a topic. */
 export type NoteTopicEvent =
   | {
@@ -124,6 +154,24 @@ export type NoteTopicEvent =
       sources: number[];
     }
   | { type: "gaps"; gaps: string[] }
-  | { type: "done"; note_id: string; title: string; sections: number }
+  | {
+      type: "done";
+      title: string;
+      sections: number;
+      blocks: {
+        kind: BlockKind;
+        text: string;
+        origin: BlockOrigin;
+        links: {
+          section_id: string | null;
+          anchor_heading_path: string;
+          page_start: number;
+          page_end: number;
+          excerpt: string;
+          status: LinkStatus;
+          origin: LinkOrigin;
+        }[];
+      }[];
+    }
   | { type: "not_covered"; message: string }
   | { type: "error"; message: string };

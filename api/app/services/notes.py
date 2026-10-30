@@ -23,10 +23,11 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.db import utcnow
 from app.models.note_block import BlockKind, BlockOrigin, NoteBlock
 from app.models.note_link import LinkOrigin, LinkStatus, NoteLink
 from app.models.note_session import NoteSession, NoteSessionStatus, NoteSource
@@ -122,8 +123,7 @@ async def create_note_session(
     )
 
 
-async def _section_ids_by_note(
-    db: AsyncSession,
+async def _section_ids_by_note(    db: AsyncSession,
     note_ids: list[uuid.UUID],
 ) -> dict[uuid.UUID, list[uuid.UUID]]:
     """Which sections each note cites, for a whole page, in one query.
@@ -282,13 +282,11 @@ class NoteLinkDraft(BaseModel):
     excerpt, so a client can never store a hash that does not match the text.
     """
 
-    chunk_id: Optional[uuid.UUID] = None
     section_id: Optional[uuid.UUID] = None
     anchor_heading_path: str
     page_start: int
     page_end: int
     excerpt: str
-    distance: Optional[float] = None
     origin: LinkOrigin
     status: LinkStatus = LinkStatus.ACCEPTED
 
@@ -312,7 +310,6 @@ class NoteLinkResponse(BaseModel):
     """One stored link, as the note view renders it as a chip."""
 
     id: uuid.UUID
-    chunk_id: Optional[uuid.UUID] = None
     section_id: Optional[uuid.UUID] = None
     anchor_heading_path: str
     page_start: int
@@ -366,7 +363,6 @@ def _hash(text: str) -> str:
 def _link_response(link: NoteLink) -> NoteLinkResponse:
     return NoteLinkResponse(
         id=link.id,
-        chunk_id=link.chunk_id,
         section_id=link.section_id,
         anchor_heading_path=link.anchor_heading_path,
         page_start=link.page_start,
@@ -418,14 +414,12 @@ def _insert_links(
         db.add(
             NoteLink(
                 block_id=block_id,
-                chunk_id=draft.chunk_id,
                 section_id=draft.section_id,
                 anchor_heading_path=draft.anchor_heading_path,
                 page_start=draft.page_start,
                 page_end=draft.page_end,
                 excerpt=draft.excerpt,
                 excerpt_hash=_hash(draft.excerpt),
-                distance=draft.distance,
                 origin=draft.origin,
                 status=draft.status,
             )
@@ -619,3 +613,247 @@ async def get_note_detail(
     if note is None:
         return None
     return _detail_response(note)
+
+
+# ── Batched upsert (local-first write-behind) ─────────────────
+
+
+class NoteBatchLink(BaseModel):
+    """A link as the local store holds it: client id, no server-only fields."""
+
+    id: uuid.UUID
+    section_id: Optional[uuid.UUID] = None
+    anchor_heading_path: str
+    page_start: int
+    page_end: int
+    excerpt: str
+    status: LinkStatus = LinkStatus.ACCEPTED
+    origin: LinkOrigin
+
+
+class NoteBatchBlock(BaseModel):
+    """A block with a client-generated id, so the upsert is idempotent."""
+
+    id: uuid.UUID
+    kind: BlockKind
+    text: str
+    origin: BlockOrigin = BlockOrigin.TYPED
+    links: list[NoteBatchLink] = []
+
+
+class NoteBatchNote(BaseModel):
+    """One note's full current state, as flushed by the client."""
+
+    id: uuid.UUID
+    book_id: uuid.UUID
+    title: Optional[str] = None
+    source: NoteSource
+    blocks: list[NoteBatchBlock] = []
+
+
+def _upsert_insert(db: AsyncSession, model):
+    """A dialect ``INSERT`` that supports ``ON CONFLICT``.
+
+    Postgres in production, SQLite in the test harness -- both expose
+    ``on_conflict_do_update``. Chosen from the *session's* dialect, not the
+    global engine, so tests actually exercise the SQLite path.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    return insert(model)
+
+
+async def upsert_notes_batch(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    notes: list[NoteBatchNote],
+    deleted: list[uuid.UUID] | None = None,
+) -> list[tuple[uuid.UUID, datetime]]:
+    """Upsert many notes' current state in one transaction.
+
+    The client is the source of truth (last-writer-wins), so each note arrives as
+    its full current block list. This collapses "one save per note" into a single
+    round trip: one multi-row ``INSERT ... ON CONFLICT`` per table, then deletes
+    for rows the client dropped. Client ids ARE the row ids, so a replay is
+    idempotent and a retried outbox never duplicates.
+
+    Returns ``(note_id, updated_at)`` for every note that was written.
+    """
+    deleted = deleted or []
+    if not notes and not deleted:
+        return []
+
+    now = utcnow()
+
+    # Delete owned notes first. Children are removed explicitly so this works
+    # whether or not the database enforces ON DELETE CASCADE.
+    if deleted:
+        owned = await db.execute(
+            select(NoteSession.id).where(
+                NoteSession.id.in_(deleted), NoteSession.user_id == user_id
+            )
+        )
+        doomed = [row[0] for row in owned.all()]
+        if doomed:
+            doomed_blocks = select(NoteBlock.id).where(NoteBlock.note_id.in_(doomed))
+            await db.execute(
+                delete(NoteLink).where(NoteLink.block_id.in_(doomed_blocks))
+            )
+            await db.execute(delete(NoteBlock).where(NoteBlock.note_id.in_(doomed)))
+            await db.execute(
+                delete(NoteSession).where(
+                    NoteSession.id.in_(doomed), NoteSession.user_id == user_id
+                )
+            )
+
+    if not notes:
+        await db.commit()
+        return []
+
+    note_ids = [note.id for note in notes]
+
+    # Ownership guard: a client must never overwrite another user's note.
+    owner_rows = await db.execute(
+        select(NoteSession.id, NoteSession.user_id).where(
+            NoteSession.id.in_(note_ids)
+        )
+    )
+    owners = {row[0]: row[1] for row in owner_rows.all()}
+    allowed = [note for note in notes if owners.get(note.id) in (None, user_id)]
+    if not allowed:
+        await db.commit()
+        return []
+
+    # 1. Headers -- one multi-row upsert.
+    session_rows = []
+    for note in allowed:
+        accepted_sections = {
+            link.section_id
+            for block in note.blocks
+            for link in block.links
+            if link.status == LinkStatus.ACCEPTED and link.section_id is not None
+        }
+        session_rows.append(
+            {
+                "id": note.id,
+                "user_id": user_id,
+                "book_id": note.book_id,
+                "title": note.title,
+                "source": note.source,
+                "raw_text": "\n\n".join(block.text for block in note.blocks),
+                "status": NoteSessionStatus.COMPLETED,
+                "matched_section_count": len(accepted_sections),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    note_ins = _upsert_insert(db, NoteSession).values(session_rows)
+    await db.execute(
+        note_ins.on_conflict_do_update(
+            index_elements=[NoteSession.id],
+            set_={
+                "title": note_ins.excluded.title,
+                "source": note_ins.excluded.source,
+                "raw_text": note_ins.excluded.raw_text,
+                "status": note_ins.excluded.status,
+                "matched_section_count": note_ins.excluded.matched_section_count,
+                "updated_at": note_ins.excluded.updated_at,
+            },
+        )
+    )
+
+    # 2. Blocks -- one multi-row upsert; skip unchanged text via content_hash.
+    block_rows = []
+    for note in allowed:
+        for position, block in enumerate(note.blocks):
+            block_rows.append(
+                {
+                    "id": block.id,
+                    "note_id": note.id,
+                    "position": position,
+                    "kind": block.kind,
+                    "text": block.text,
+                    "content_hash": _hash(block.text),
+                    "origin": block.origin,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+    if block_rows:
+        block_ins = _upsert_insert(db, NoteBlock).values(block_rows)
+        await db.execute(
+            block_ins.on_conflict_do_update(
+                index_elements=[NoteBlock.id],
+                set_={
+                    "position": block_ins.excluded.position,
+                    "kind": block_ins.excluded.kind,
+                    "text": block_ins.excluded.text,
+                    "content_hash": block_ins.excluded.content_hash,
+                    "updated_at": block_ins.excluded.updated_at,
+                },
+                where=NoteBlock.content_hash != block_ins.excluded.content_hash,
+            )
+        )
+
+    # 3. Links -- one multi-row upsert (excerpt_hash derived server-side).
+    link_rows = []
+    for note in allowed:
+        for block in note.blocks:
+            for link in block.links:
+                link_rows.append(
+                    {
+                        "id": link.id,
+                        "block_id": block.id,
+                        "section_id": link.section_id,
+                        "anchor_heading_path": link.anchor_heading_path,
+                        "page_start": link.page_start,
+                        "page_end": link.page_end,
+                        "excerpt": link.excerpt,
+                        "excerpt_hash": _hash(link.excerpt),
+                        "origin": link.origin,
+                        "status": link.status,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+    if link_rows:
+        link_ins = _upsert_insert(db, NoteLink).values(link_rows)
+        await db.execute(
+            link_ins.on_conflict_do_update(
+                index_elements=[NoteLink.id],
+                set_={
+                    "section_id": link_ins.excluded.section_id,
+                    "anchor_heading_path": link_ins.excluded.anchor_heading_path,
+                    "page_start": link_ins.excluded.page_start,
+                    "page_end": link_ins.excluded.page_end,
+                    "excerpt": link_ins.excluded.excerpt,
+                    "excerpt_hash": link_ins.excluded.excerpt_hash,
+                    "origin": link_ins.excluded.origin,
+                    "status": link_ins.excluded.status,
+                    "updated_at": link_ins.excluded.updated_at,
+                },
+            )
+        )
+
+    # 4. Drop blocks the client removed (their links cascade away).
+    for note in allowed:
+        keep_blocks = [block.id for block in note.blocks]
+        delete_blocks = delete(NoteBlock).where(NoteBlock.note_id == note.id)
+        if keep_blocks:
+            delete_blocks = delete_blocks.where(NoteBlock.id.notin_(keep_blocks))
+        await db.execute(delete_blocks)
+
+    # 5. Drop links the client removed (on surviving blocks).
+    for note in allowed:
+        keep_links = [link.id for block in note.blocks for link in block.links]
+        block_ids = select(NoteBlock.id).where(NoteBlock.note_id == note.id)
+        delete_links = delete(NoteLink).where(NoteLink.block_id.in_(block_ids))
+        if keep_links:
+            delete_links = delete_links.where(NoteLink.id.notin_(keep_links))
+        await db.execute(delete_links)
+
+    await db.commit()
+    return [(note.id, now) for note in allowed]
