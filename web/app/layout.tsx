@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DbCallBadge } from "@/components/debug/db-call-badge";
+import { AuthBridge } from "@/components/auth/auth-bridge";
 import { caveat } from "@/lib/fonts";
 
 export const metadata: Metadata = {
@@ -30,6 +31,7 @@ export default function RootLayout({
               "try{if(localStorage.getItem('folio-theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}",
           }}
         />
+        <AuthBridge />
         {children}
         <ThemeToggle />
         <DbCallBadge />

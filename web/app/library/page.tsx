@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useBooksStore } from "@/lib/store";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
+import { AuthNav } from "@/components/auth/auth-nav";
 import type { IngestionStatus, BookResponse } from "@/types/books";
 
 const STATUS_LABEL: Record<IngestionStatus, string> = {
@@ -59,7 +60,7 @@ function BookCard({ book }: { book: BookResponse }) {
   return (
     <Link
       href={`/reader?id=${book.id}`}
-      className="group flex flex-col overflow-hidden rounded-xl bg-bg-elevated border border-border hover:border-accent/40 transition-colors"
+      className="group flex flex-col overflow-hidden rounded-xl bg-bg-elevated border border-border transition-all duration-150 ease-out hover:border-accent/40 hover:shadow-md active:scale-[0.97] active:bg-bg-surface"
     >
       <div className="relative aspect-[3/4] bg-bg-surface">
         <BookCover title={book.title} cover_image_url={book.cover_image_url} />
@@ -87,6 +88,25 @@ function BookCard({ book }: { book: BookResponse }) {
         )}
       </div>
     </Link>
+  );
+}
+
+function SkeletonGrid() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div
+          key={index}
+          className="flex flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated"
+        >
+          <div className="aspect-[3/4] animate-pulse bg-bg-surface" />
+          <div className="space-y-2 p-4">
+            <div className="h-3.5 w-3/4 animate-pulse rounded bg-bg-surface" />
+            <div className="h-3 w-1/2 animate-pulse rounded bg-bg-surface" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -125,9 +145,7 @@ export default function LibraryPage() {
             Folio
           </span>
         </div>
-        <button className="text-body-sm text-text-muted hover:text-text-primary transition-colors">
-          Sign in
-        </button>
+        <AuthNav />
       </header>
 
       {/* Content */}
@@ -173,10 +191,8 @@ export default function LibraryPage() {
         </div>
 
         {/* States */}
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader label="Loading your library…" />
-          </div>
+        {loading && books.length === 0 ? (
+          <SkeletonGrid />
         ) : error ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <p className="text-body text-state-error mb-2">

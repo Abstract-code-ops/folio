@@ -138,6 +138,26 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+# ── Read-only engine (AUTOCOMMIT) ─────────────────────────────
+# A GET currently pays BEGIN → SELECT → COMMIT. With a remote database that is
+# an extra round trip per read. An AUTOCOMMIT engine turns a read into a single
+# statement. Writes must keep using get_async_session (transactional).
+
+read_async_engine = async_engine.execution_options(isolation_level="AUTOCOMMIT")
+
+ReadSessionLocal = async_sessionmaker(
+    bind=read_async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+
+async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency — an AUTOCOMMIT session for read-only endpoints."""
+    async with ReadSessionLocal() as session:
+        yield session
+
+
 # ── Sync engine + session (Dramatiq workers) ──────────────────
 
 sync_engine = create_engine(

@@ -1,7 +1,7 @@
 import { apiClient } from "./api-client";
 import { useChatStore } from "./chat-store";
 import { useNotesStore, type LocalNote } from "./notes-store";
-import { markNoteSynced } from "./note-sync";
+import { markNoteSynced, flushNoteSyncNow } from "./note-sync";
 import type { NoteDetail } from "@/types/notes";
 
 /**
@@ -65,10 +65,19 @@ export async function importNotesForBook(
   }
 }
 
-/** Import this user's chat history for a book, only on a cache miss. */
-export async function importChatForBook(bookId: string): Promise<void> {
+/** Import this user's chat history for a book, only on a cache miss (or force). */
+export async function importChatForBook(
+  bookId: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
   const store = useChatStore.getState();
-  if (store.listSessions(bookId).length > 0) return; // cache hit
+  if (options.force) {
+    // A manual sync reconciles chat from the server: drop the local view and
+    // rebuild it from the recorded turns (which include other devices').
+    for (const session of store.listSessions(bookId)) store.deleteSession(session.id);
+  } else if (store.listSessions(bookId).length > 0) {
+    return; // cache hit
+  }
 
   const data = await apiClient.listQaTurns({ bookId, limit: 200 });
   const turns = [...data.turns].reverse(); // oldest first
@@ -98,5 +107,18 @@ export async function syncUserData(bookId: string): Promise<void> {
   await Promise.allSettled([
     importNotesForBook(bookId),
     importChatForBook(bookId),
+  ]);
+}
+
+/**
+ * Manual cross-device sync: push this device's pending note edits to the server,
+ * then pull the server's current notes + chat so changes made on another device
+ * (phone vs laptop) show up here. Rate limiting is handled by the caller.
+ */
+export async function syncBook(bookId: string): Promise<void> {
+  await flushNoteSyncNow(); // push local edits first so they aren't overwritten
+  await Promise.allSettled([
+    importNotesForBook(bookId, { force: true }),
+    importChatForBook(bookId, { force: true }),
   ]);
 }

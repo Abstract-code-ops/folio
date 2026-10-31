@@ -17,6 +17,9 @@ export interface TurnDiagnostics {
   retrieved: RetrievedPassage[];
   citations: number;
   answer_chars: number;
+  reasoning?: string | null;
+  ttft_ms?: number | null;
+  total_ms?: number | null;
   error: string | null;
 }
 

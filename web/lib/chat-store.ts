@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { userScopedStorage } from "./user-scope";
 
 export interface Citation {
   /** Passage number the answer cited, e.g. `[2]`. Absent on older persisted chats. */
@@ -70,6 +71,7 @@ interface ChatStore {
   createSession: (bookId: string) => string;
   deleteSession: (id: string) => void;
   setActive: (bookId: string, id: string) => void;
+  truncateTo: (id: string, keep: number) => void;
 
   setPendingSeed: (bookId: string, text: string) => void;
   consumeSeed: (bookId: string) => string | null;
@@ -135,6 +137,16 @@ export const useChatStore = create<ChatStore>()(
       setActive: (bookId, id) =>
         set((s) => ({ activeByBook: { ...s.activeByBook, [bookId]: id } })),
 
+      truncateTo: (id, keep) =>
+        set((s) => ({
+          sessions: patchSession(s.sessions, id, (session) => ({
+            ...session,
+            messages: session.messages.slice(0, Math.max(0, keep)),
+            summarizedCount: Math.min(session.summarizedCount, Math.max(0, keep)),
+            updatedAt: Date.now(),
+          })),
+        })),
+
       setPendingSeed: (bookId, text) =>
         set({ pendingSeed: { bookId, text } }),
 
@@ -199,6 +211,9 @@ export const useChatStore = create<ChatStore>()(
           })),
         })),
     }),
-    { name: "folio-chat-sessions" },
+    {
+      name: "folio-chat-sessions",
+      storage: createJSONStorage(() => userScopedStorage()),
+    },
   ),
 );

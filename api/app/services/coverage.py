@@ -99,65 +99,58 @@ async def get_coverage_map(
     Returns every section of the book (ordered by chapter then section
     position) with its aggregated coverage score and derived visual state.
     """
-    # 1. Fetch all sections for the book, ordered by hierarchy
-    section_query = (
-        select(Section)
+    # Single query: sections LEFT JOIN their coverage events (filtered to this
+    # user + book in the ON clause). One round trip instead of two; rows for a
+    # section are contiguous thanks to the ORDER BY, so we fold them in Python
+    # (point values stay env-configurable via settings).
+    query = (
+        select(Section, CoverageEvent.event_type)
+        .outerjoin(
+            CoverageEvent,
+            (CoverageEvent.section_id == Section.id)
+            & (CoverageEvent.user_id == user_id)
+            & (CoverageEvent.book_id == book_id),
+        )
         .where(Section.book_id == book_id)
-        .order_by(Section.chapter_index, Section.section_index)
+        .order_by(Section.chapter_index, Section.section_index, Section.id)
     )
-    section_result = await db.execute(section_query)
-    sections = section_result.scalars().all()
+    rows = (await db.execute(query)).all()
 
-    # 2. Aggregate coverage events → total points per section
-    #    Sum points per section_id using the event-type point map.
-    #    We compute this in Python rather than a raw SQL sum-of-case
-    #    because the point values come from Settings (env-configurable).
-    event_query = (
-        select(
-            CoverageEvent.section_id,
-            CoverageEvent.event_type,
-        )
-        .where(
-            CoverageEvent.user_id == user_id,
-            CoverageEvent.book_id == book_id,
-        )
-    )
-    event_result = await db.execute(event_query)
-    event_rows = event_result.all()
-
-    # Aggregate: section_id → total score (capped)
-    raw_scores: dict[uuid.UUID, int] = {}
-    for section_id, event_type in event_rows:
-        points = EVENT_POINT_MAP.get(event_type, 0)
-        current = raw_scores.get(section_id, 0)
-        raw_scores[section_id] = min(current + points, COVERAGE_CAP)
-
-    # 3. Build response
-    section_coverages: list[SectionCoverage] = []
-    for section in sections:
-        score = raw_scores.get(section.id, 0)
-        key_terms = []
+    def build(section: Section, value: int) -> SectionCoverage:
+        key_terms: list[str] = []
         if section.section_metadata and "concepts" in section.section_metadata:
             key_terms = section.section_metadata["concepts"]
-
-        section_coverages.append(
-            SectionCoverage(
-                id=section.id,
-                book_id=section.book_id,
-                parent_section_id=section.parent_section_id,
-                chapter_index=section.chapter_index,
-                section_index=section.section_index,
-                level=section.level,
-                heading=section.heading,
-                page_start=section.page_start,
-                page_end=section.page_end,
-                word_count=section.word_count,
-                is_connective=section.is_connective,
-                coverage_score=score,
-                coverage_state=coverage_state_from_score(score),
-                key_terms=key_terms,
-            )
+        return SectionCoverage(
+            id=section.id,
+            book_id=section.book_id,
+            parent_section_id=section.parent_section_id,
+            chapter_index=section.chapter_index,
+            section_index=section.section_index,
+            level=section.level,
+            heading=section.heading,
+            page_start=section.page_start,
+            page_end=section.page_end,
+            word_count=section.word_count,
+            is_connective=section.is_connective,
+            coverage_score=value,
+            coverage_state=coverage_state_from_score(value),
+            key_terms=key_terms,
         )
+
+    section_coverages: list[SectionCoverage] = []
+    current: Optional[Section] = None
+    score = 0
+    for section, event_type in rows:
+        if current is None or section.id != current.id:
+            if current is not None:
+                section_coverages.append(build(current, score))
+            current = section
+            score = 0
+        if event_type is not None:
+            score = min(score + EVENT_POINT_MAP.get(event_type, 0), COVERAGE_CAP)
+
+    if current is not None:
+        section_coverages.append(build(current, score))
 
     return CoverageMapResponse(
         book_id=book_id,

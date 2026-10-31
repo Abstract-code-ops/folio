@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Download,
@@ -8,15 +8,16 @@ import {
   NotebookPen,
   PenLine,
   Sparkles,
-  Upload,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Loader } from "@/components/ui/loader";
 import {
   citedSectionIds,
   useNotesNav,
   useNotesStore,
 } from "@/lib/notes-store";
-import { importNotesForBook } from "@/lib/sync";
+import { syncBook } from "@/lib/sync";
 import { NewNoteMenu } from "./NewNoteMenu";
 import { NoteEditor } from "./NoteEditor";
 import { NoteView } from "./NoteView";
@@ -50,6 +51,11 @@ export function NotesPanel({
     [notes, bookId],
   );
 
+  const generating = useMemo(
+    () => list.some((note) => note.status === "generating"),
+    [list],
+  );
+
   // Which note the panel shows lives in a store, not local state, so it survives
   // the panel unmounting (desktop collapse or a mobile sheet closing). In memory
   // only, so a reload starts on the list.
@@ -70,7 +76,8 @@ export function NotesPanel({
     if (edit) setEditing(bookId, true);
   };
 
-  const [importing, setImporting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
 
   const downloadNotes = () => {
     const json = useNotesStore.getState().exportNotes();
@@ -83,13 +90,24 @@ export function NotesPanel({
     URL.revokeObjectURL(url);
   };
 
-  const importServerNotes = async () => {
-    if (importing) return;
-    setImporting(true);
+  // Cross-device sync: push this device's edits, then pull the server's current
+  // notes + chat for this book. Rate-limited with a short cooldown.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  const doSync = async () => {
+    if (syncing || cooldown > 0) return;
+    setSyncing(true);
     try {
-      await importNotesForBook(bookId, { force: true });
+      await syncBook(bookId);
+    } catch {
+      // best-effort; the button re-enables after the cooldown
     } finally {
-      setImporting(false);
+      setSyncing(false);
+      setCooldown(15);
     }
   };
 
@@ -148,14 +166,23 @@ export function NotesPanel({
             Download
           </button>
           <button
-            onClick={importServerNotes}
-            disabled={importing}
+            onClick={doSync}
+            disabled={syncing || cooldown > 0}
+            title="Pull the latest notes and chat from the server (across devices)"
             className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary disabled:opacity-50 sm:min-h-0"
           >
-            <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
-            {importing ? "Importing…" : "Import"}
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", syncing && "animate-spin")}
+              strokeWidth={1.5}
+            />
+            {syncing ? "Syncing…" : cooldown > 0 ? `Sync (${cooldown})` : "Sync"}
           </button>
         </div>
+        {generating && (
+          <p className="mt-2 text-body-sm text-state-error" role="alert">
+            Don&apos;t reload the page — a note is still generating.
+          </p>
+        )}
       </div>
 
       {/* Note list — scrollable */}
@@ -197,6 +224,47 @@ export function NotesPanel({
             {list.map((note) => {
               const sections = citedSectionIds(note).length;
               const generated = note.source === "ai_generated";
+
+              if (note.status === "generating") {
+                return (
+                  <div
+                    key={note.id}
+                    className="flex min-h-14 items-center gap-3 px-5 py-3.5 lg:px-6"
+                  >
+                    <Loader variant="dots" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body font-medium text-text-primary">
+                        {note.title ?? "New note"}
+                      </span>
+                      <span className="block truncate text-body-sm text-text-subtle">
+                        Generating…
+                      </span>
+                    </span>
+                  </div>
+                );
+              }
+
+              if (note.status === "error") {
+                return (
+                  <div
+                    key={note.id}
+                    className="flex min-h-14 items-start gap-3 px-5 py-3.5 lg:px-6"
+                  >
+                    <span className="shrink-0 text-state-error">
+                      <FileText className="h-4 w-4" strokeWidth={1.5} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body font-medium text-text-primary">
+                        {note.title ?? "New note"}
+                      </span>
+                      <span className="block truncate text-body-sm text-state-error">
+                        {note.error ?? "Generation failed — try again"}
+                      </span>
+                    </span>
+                  </div>
+                );
+              }
+
               return (
                 <button
                   key={note.id}

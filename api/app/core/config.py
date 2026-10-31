@@ -26,6 +26,17 @@ class Settings(BaseSettings):
 
     # ── Auth (Better Auth session table) ──────────────────────
     better_auth_session_table: str = "session"
+    # Column that holds the session token. Better Auth stores the session
+    # cookie/token in a dedicated column (default name ``token``), distinct
+    # from the row ``id``. Requests are looked up by this column, not by id.
+    better_auth_session_token_column: str = "token"
+    # Deployment environment. "production" arms the fail-closed auth guard in
+    # ``enforce_auth_config`` below (also honours the ``ENV`` env var).
+    environment: str = "development"
+    # Require a valid session token on every protected request. Defaults to
+    # True — auth fails closed. Set False only for local development; the app
+    # refuses to start with this False when the environment is production.
+    auth_required: bool = True
 
     # ── AI Providers (LiteLLM) ────────────────────────────────
     # Embedding → Nomic via local Ollama.
@@ -117,7 +128,32 @@ class Settings(BaseSettings):
     # Hard cap on generated answer length. The prompt asks for 2-4 paragraphs,
     # so this bounds a runaway model: gpt-oss-20b has been observed degenerating
     # into a single repeated token until the provider killed the stream.
-    qa_answer_max_tokens: int = 700
+    qa_answer_max_tokens: int = 1000
+
+    # Cap the answer call's read timeout (seconds) BELOW the client's 60s
+    # watchdog, so a hung provider ends the stream server-side and the turn is
+    # still persisted (as an error) for the eval, instead of lingering for the
+    # provider's full 180s and never being recorded.
+    qa_answer_read_timeout: float = 50.0
+
+    # Overall budget for generating one answer. Checked each streamed chunk, so a
+    # provider that keeps dribbling empty/reasoning deltas (never a content token)
+    # is cut off here rather than hanging. Kept below the routing timeout + client
+    # watchdog so the turn still ends server-side and is persisted for the eval.
+    qa_answer_total_timeout: float = 45.0
+
+    # gpt-oss-20b is a *reasoning* model: it spends tokens on hidden reasoning
+    # before any answer text (measured 136 reasoning tokens at default vs 5 at
+    # "low"), which delays the first token and can consume the whole output
+    # budget so the answer comes back empty. "low" keeps answers fast and whole.
+    qa_reasoning_effort: str = "low"
+
+    # ── Q&A prompt dump (review aid) ──────────────────────────
+    # Write the exact messages sent to the answer model (system + history +
+    # context) to a markdown file so the prompt can be reviewed. Overwritten
+    # on each grounded turn. Disable in production.
+    qa_prompt_dump: bool = True
+    qa_prompt_dump_path: str = "logs/qa-prompt.md"
 
     # ── Q&A agent (U11, revised) ──────────────────────────────
     # The agent decides whether a message needs the book at all: greetings and
@@ -150,3 +186,20 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def enforce_auth_config() -> None:
+    """Refuse to run with authentication disabled in production.
+
+    Called at import time from ``main.py``. The whole point is to fail closed:
+    a ``auth_required=False`` deployment is a development convenience, and it
+    must never reach production silently.
+    """
+    import os
+
+    environment = (os.getenv("ENV") or settings.environment or "").strip().lower()
+    if environment == "production" and not settings.auth_required:
+        raise RuntimeError(
+            "Refusing to start: auth_required is False while the environment is "
+            "'production'. Authentication must stay enabled in production."
+        )

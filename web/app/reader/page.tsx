@@ -1,11 +1,13 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Brain, Contrast, MessageSquare, FileText, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import dynamicImport from "next/dynamic";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
 import { Loader } from "@/components/ui/loader";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
   Sheet,
   SheetContent,
@@ -423,9 +425,15 @@ function ReaderContent() {
   // ── Loading state ───────────────────────────────────────────
   if (bookLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-bg-base">
-        <Loader label="Loading book…" />
-      </div>
+      <LoadingScreen
+        messages={[
+          "Loading book…",
+          "Fetching sections…",
+          "Loading chat…",
+          "Preparing notes…",
+          "Almost there…",
+        ]}
+      />
     );
   }
 
@@ -458,9 +466,9 @@ function ReaderContent() {
               <PanelLeftClose className="h-4 w-4" strokeWidth={1.5} />
             )}
           </button>
-          <a href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+          <Link href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
             ← Library
-          </a>
+          </Link>
           <span className="text-text-subtle">/</span>
           <span className="font-heading text-body-sm font-semibold text-text-primary truncate">
             {book.title}
@@ -560,9 +568,9 @@ function ReaderContent() {
       <div
         className={`flex items-center gap-2 px-4 h-10 border-b border-border-subtle bg-bg-surface shrink-0 transition-opacity motion-reduce:transition-none ${chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
       >
-        <a href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
+        <Link href="/library" className="inline-flex min-h-11 items-center text-body-sm text-text-muted hover:text-text-primary transition-colors shrink-0">
           ← Library
-        </a>
+        </Link>
         <span className="text-text-subtle">/</span>
         <h1 className="sr-only">{book.title}</h1>
         <span className="text-body-sm text-text-muted truncate">{book.title}</span>
@@ -666,9 +674,15 @@ export default function ReaderPage() {
   return (
     <Suspense
       fallback={
-        <div className="h-screen flex items-center justify-center bg-bg-base">
-          <Loader />
-        </div>
+        <LoadingScreen
+          messages={[
+            "Loading book…",
+            "Fetching sections…",
+            "Loading chat…",
+            "Preparing notes…",
+            "Almost there…",
+          ]}
+        />
       }
     >
       <ReaderContent />

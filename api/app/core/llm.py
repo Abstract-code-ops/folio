@@ -47,9 +47,23 @@ VOID_API_BASE: str = settings.void_api_base
 
 OLLAMA_API_BASE: str = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
 
+# Keep the embedding model resident so queries do not pay a cold model load.
+_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+
 # Embeddings are local and fast; generation can be slow, so the read timeout is
 # generous — a streamed answer may pause between tokens.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+
+# One pooled client for every async call. Creating a client per request pays a
+# fresh TLS handshake to the provider, which shows up as time-to-first-token.
+_async_client: httpx.AsyncClient | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _async_client
+    if _async_client is None or _async_client.is_closed:
+        _async_client = httpx.AsyncClient(timeout=_TIMEOUT)
+    return _async_client
 
 
 # ── Embeddings ────────────────────────────────────────────────
@@ -74,12 +88,13 @@ def _check_dimension(vector: list[float], model: str) -> list[float]:
 async def embed_text(text: str, model: Optional[str] = None) -> list[float]:
     """Embed one string via the local Ollama daemon."""
     target = model or EMBEDDING_MODEL
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.post(
-            _embed_endpoint(), json={"model": target, "input": text}
-        )
-        response.raise_for_status()
-        embeddings = response.json().get("embeddings") or []
+    client = _client()
+    response = await client.post(
+        _embed_endpoint(),
+        json={"model": target, "input": text, "keep_alive": _KEEP_ALIVE},
+    )
+    response.raise_for_status()
+    embeddings = response.json().get("embeddings") or []
     if not embeddings:
         raise RuntimeError(f"Ollama returned no embedding for model {target}")
     return _check_dimension(embeddings[0], target)
@@ -90,7 +105,8 @@ def embed_text_sync(text: str, model: Optional[str] = None) -> list[float]:
     target = model or EMBEDDING_MODEL
     with httpx.Client(timeout=_TIMEOUT) as client:
         response = client.post(
-            _embed_endpoint(), json={"model": target, "input": text}
+            _embed_endpoint(),
+            json={"model": target, "input": text, "keep_alive": _KEEP_ALIVE},
         )
         response.raise_for_status()
         embeddings = response.json().get("embeddings") or []
@@ -205,7 +221,14 @@ def _delta_chunk(layer: dict[str, Any]) -> SimpleNamespace:
     choice = (layer.get("choices") or [{}])[0]
     delta = choice.get("delta") or {}
     return SimpleNamespace(
-        choices=[SimpleNamespace(delta=SimpleNamespace(content=delta.get("content")))],
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=delta.get("content"),
+                    reasoning_content=delta.get("reasoning_content"),
+                )
+            )
+        ],
         finish_reason=choice.get("finish_reason"),
     )
 
@@ -215,39 +238,37 @@ async def _stream(
     timeout: httpx.Timeout,
 ) -> AsyncIterator[SimpleNamespace]:
     """Yield server-sent chunks. Raises if the provider reports an error inline."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream(
-            "POST", _chat_endpoint(), json=payload, headers=_headers()
-        ) as response:
-            if response.status_code >= 400:
-                body = await response.aread()
+    client = _client()
+    async with client.stream(
+        "POST", _chat_endpoint(), json=payload, headers=_headers(), timeout=timeout
+    ) as response:
+        if response.status_code >= 400:
+            body = await response.aread()
+            raise RuntimeError(
+                _error_detail(response.status_code, body.decode("utf-8", "replace"))
+            )
+
+        async for line in response.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                layer = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            # An error can arrive as a normal chunk with finish_reason
+            # "error"; surface it so the caller's retry logic can act.
+            choices = layer.get("choices") or [{}]
+            if choices[0].get("finish_reason") == "error":
+                text = ((choices[0].get("delta") or {}).get("content") or "").strip()
                 raise RuntimeError(
-                    _error_detail(
-                        response.status_code, body.decode("utf-8", "replace")
-                    )
+                    f"provider aborted the stream: {text or 'no detail given'}"
                 )
 
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[len("data:") :].strip()
-                if not data or data == "[DONE]":
-                    continue
-                try:
-                    layer = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-
-                # An error can arrive as a normal chunk with finish_reason
-                # "error"; surface it so the caller's retry logic can act.
-                choices = layer.get("choices") or [{}]
-                if choices[0].get("finish_reason") == "error":
-                    text = ((choices[0].get("delta") or {}).get("content") or "").strip()
-                    raise RuntimeError(
-                        f"provider aborted the stream: {text or 'no detail given'}"
-                    )
-
-                yield _delta_chunk(layer)
+            yield _delta_chunk(layer)
 
 
 async def void_acompletion(
@@ -287,10 +308,10 @@ async def void_acompletion(
     if stream:
         return _stream(payload, effective_timeout)
 
-    async with httpx.AsyncClient(timeout=effective_timeout) as client:
-        response = await client.post(
-            _chat_endpoint(), json=payload, headers=_headers()
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(_error_detail(response.status_code, response.text))
-        return _completion(response.json())
+    client = _client()
+    response = await client.post(
+        _chat_endpoint(), json=payload, headers=_headers(), timeout=effective_timeout
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(_error_detail(response.status_code, response.text))
+    return _completion(response.json())

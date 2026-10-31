@@ -1,10 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Send, MessageSquare, ExternalLink, Trash2, Plus, X } from "lucide-react";
+import { Send, MessageSquare, ExternalLink, Trash2, Plus, X, RotateCcw, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
+import { syncBook } from "@/lib/sync";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
+import "katex/dist/katex.min.css";
+import "highlight.js/styles/github-dark.css";
 import { Loader } from "@/components/ui/loader";
 import type { QaEvent } from "@/types/chat";
 import {
@@ -13,6 +20,48 @@ import {
   type ChatSession,
   type Citation,
 } from "@/lib/chat-store";
+
+// KaTeX (math) + highlight.js (code). Hoisted to module scope: a new array identity
+// would re-run the whole markdown pipeline on every render — which, mid-stream,
+// is every commit. Typed `any` to avoid pulling in "unified"'s types as a dep.
+const REMARK_PLUGINS: any = [remarkMath, remarkGfm];
+const REHYPE_PLUGINS: any = [
+  [rehypeKatex, { throwOnError: false, strict: "ignore" }],
+  [rehypeHighlight, { detect: false, plainText: ["txt", "text", "output"] }],
+];
+
+// GFM gives tables + autolinks. Wrap tables so a wide one scrolls horizontally
+// instead of overflowing the message column.
+const MARKDOWN_COMPONENTS: any = {
+  table: ({ node: _node, ...props }: any) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="border-collapse" {...props} />
+    </div>
+  ),
+};
+
+const THINKING_LABELS = ["Thinking…", "Reading the book…", "Working out an answer…"];
+
+// Shown while the request is in flight but no answer token has arrived yet —
+// covers routing + retrieval + the model's silent reasoning phase.
+function ThinkingIndicator() {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setIndex((n) => (n + 1) % THINKING_LABELS.length),
+      1600,
+    );
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="flex items-center gap-2 rounded-lg rounded-bl-sm bg-bg-elevated px-3 py-2 text-body-sm text-text-muted">
+      <Loader variant="dots" />
+      <span key={index} className="animate-pulse">
+        {THINKING_LABELS[index]}
+      </span>
+    </div>
+  );
+}
 
 // Keep this many recent messages visible; summarize anything older.
 const RECENT_KEEP = 6;
@@ -56,6 +105,9 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
 
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [thinking, setThinking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -160,6 +212,48 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
       notCovered: null,
     });
     setStreaming(true);
+    setThinking(true);
+    let gotToken = false;
+
+    // Reveal tokens at a deliberate pace instead of as fast as the network
+    // delivers them. The buffer holds raw deltas; the writer drains it smoothly.
+    const buffer = { text: "" };
+    let streamFinished = false;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const writer = (async () => {
+      while (!streamFinished || buffer.text.length > 0) {
+        if (buffer.text.length === 0) {
+          await sleep(14);
+          continue;
+        }
+        if (reduceMotion) {
+          const all = buffer.text;
+          buffer.text = "";
+          useChatStore.getState().appendToken(sessionId, all);
+          continue;
+        }
+        // Catch up when the network bursts: reveal more per tick for a backlog,
+        // one char at a time for a trickle.
+        const take = Math.max(2, Math.ceil(buffer.text.length / 12));
+        const chunk = buffer.text.slice(0, take);
+        buffer.text = buffer.text.slice(take);
+        useChatStore.getState().appendToken(sessionId, chunk);
+        await sleep(12);
+      }
+    })();
+
+    // Watchdog: abort if the provider sends nothing for 60s, so a hung provider
+    // does not leave the user waiting; the error offers a retry.
+    const controller = new AbortController();
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => controller.abort(), 90000);
+    };
+    bump();
 
     let currentCitations: Citation[] = [];
 
@@ -167,6 +261,7 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
       const stream = await apiClient.askQuestion(bookId, q, {
         summary: chat.summary ?? undefined,
         history,
+        signal: controller.signal,
       });
       const reader = stream.getReader();
 
@@ -175,10 +270,15 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
         if (done) break;
 
         const event = value as QaEvent;
+        bump();
 
         switch (event.type) {
           case "token":
-            useChatStore.getState().appendToken(sessionId, event.text);
+            buffer.text += event.text;
+            if (!gotToken) {
+              gotToken = true;
+              setThinking(false);
+            }
             break;
 
           case "citation":
@@ -205,13 +305,39 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to get answer");
+      if (controller.signal.aborted) {
+        setError(
+          "The assistant took too long (90s without a response). Retry the question.",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to get answer");
+      }
     } finally {
+      if (watchdog) clearTimeout(watchdog);
+      streamFinished = true;
+      // Recover the UI first, so a stalled writer can never leave the panel
+      // stuck on "thinking"; then best-effort drain the typewriter.
+      setThinking(false);
       setStreaming(false);
+      await Promise.race([writer, sleep(3000)]);
       inputRef.current?.focus();
       await rollUpIfNeeded(sessionId);
     }
   }, [input, streaming, bookId, activeId, rollUpIfNeeded]);
+
+  // Resend a user message: drop it and everything after it, then ask it again.
+  const resendFrom = useCallback(
+    (index: number) => {
+      if (!activeId || streaming) return;
+      const store = useChatStore.getState();
+      const chat = store.getSession(activeId);
+      const target = chat?.messages[index];
+      if (!chat || !target || target.role !== "user") return;
+      store.truncateTo(activeId, index);
+      void sendQuestion(target.text);
+    },
+    [activeId, streaming, sendQuestion],
+  );
 
   // Auto-send a question seeded from a PDF selection ("Ask chat"). Placed after
   // sendQuestion so it can call it.
@@ -227,6 +353,26 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
     const timer = setTimeout(() => setConfirmClear(false), 3000);
     return () => clearTimeout(timer);
   }, [confirmClear]);
+
+  // Cross-device sync (chat + notes), rate-limited with a short cooldown.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  const doSync = useCallback(async () => {
+    if (syncing || cooldown > 0) return;
+    setSyncing(true);
+    try {
+      await syncBook(bookId);
+    } catch {
+      // best-effort; the button re-enables after the cooldown
+    } finally {
+      setSyncing(false);
+      setCooldown(15);
+    }
+  }, [bookId, syncing, cooldown]);
 
   const handleClearChat = useCallback(() => {
     if (!activeId) return;
@@ -309,6 +455,19 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
         >
           <Plus className="h-4 w-4" strokeWidth={1.5} />
         </button>
+        <button
+          onClick={doSync}
+          disabled={syncing || cooldown > 0}
+          aria-label="Sync chat and notes from the server"
+          title="Pull the latest chat + notes from the server (across devices)"
+          className="ml-auto flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-body-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary disabled:opacity-50 sm:min-h-0"
+        >
+          <RefreshCw
+            className={cn("h-3.5 w-3.5", syncing && "animate-spin")}
+            strokeWidth={1.5}
+          />
+          {syncing ? "Syncing…" : cooldown > 0 ? `${cooldown}s` : "Sync"}
+        </button>
       </div>
 
       {/* Empty state */}
@@ -370,16 +529,28 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
             <div
               key={i}
               className={cn(
-                "flex",
+                "flex items-start gap-1",
                 msg.role === "user" ? "justify-end" : "justify-start",
               )}
             >
+              {msg.role === "user" && (
+                <button
+                  type="button"
+                  onClick={() => resendFrom(i)}
+                  disabled={streaming}
+                  aria-label="Resend this message"
+                  title="Resend — drops replies after this message and asks again"
+                  className="mt-1.5 shrink-0 rounded p-1 text-text-subtle transition-colors hover:text-text-primary disabled:opacity-30"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </button>
+              )}
               <div
                 className={cn(
-                  "max-w-[85%] rounded-lg px-3 py-2 text-body font-medium leading-relaxed",
+                  "text-body leading-relaxed text-text-primary",
                   msg.role === "user"
-                    ? "bg-accent/15 text-text-primary rounded-br-sm"
-                    : "bg-bg-elevated text-text-primary rounded-bl-sm",
+                    ? "max-w-[85%] rounded-lg rounded-br-sm bg-accent/15 px-3 py-2 font-medium"
+                    : "w-full max-w-[68ch]",
                 )}
               >
                 {"notCovered" in msg && msg.notCovered && (
@@ -390,8 +561,14 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
                   msg.role === "user" ? (
                     <p className="whitespace-pre-wrap">{msg.text}</p>
                   ) : (
-                    <div className="space-y-2 [&_a]:text-accent [&_a]:underline [&_code]:rounded [&_code]:bg-bg-base [&_code]:px-1 [&_li]:ml-4 [&_li]:list-disc [&_p]:leading-relaxed [&_strong]:font-semibold">
-                      <ReactMarkdown>{msg.text}</ReactMarkdown>
+                    <div className="space-y-2 text-text-primary [&_a]:text-accent [&_a]:underline [&_code]:rounded [&_code]:bg-bg-base [&_code]:px-1 [&_code]:text-[0.85em] [&_h1]:text-h4 [&_h1]:font-semibold [&_h2]:text-h5 [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_ol]:ml-5 [&_ol]:list-decimal [&_p]:leading-relaxed [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-bg-base [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_ul]:ml-4 [&_ul]:list-disc [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1">
+                      <ReactMarkdown
+                        remarkPlugins={REMARK_PLUGINS}
+                        rehypePlugins={REHYPE_PLUGINS}
+                        components={MARKDOWN_COMPONENTS}
+                      >
+                        {msg.text}
+                      </ReactMarkdown>
                     </div>
                   )
                 )}
@@ -430,11 +607,9 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
             </div>
           ))}
 
-          {streaming && (
+          {streaming && thinking && (
             <div className="flex justify-start">
-              <div className="bg-bg-elevated rounded-lg rounded-bl-sm px-3 py-2">
-                <Loader variant="dots" />
-              </div>
+              <ThinkingIndicator />
             </div>
           )}
 
@@ -444,8 +619,18 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
 
       {/* Error banner */}
       {error && (
-        <div className="px-3 py-2 bg-state-error/10 border-t border-state-error/20">
+        <div className="flex items-center justify-between gap-2 border-t border-state-error/20 bg-state-error/10 px-3 py-2">
           <p className="text-body-sm text-state-error">{error}</p>
+          {messages.some((m) => m.role === "user") && (
+            <button
+              type="button"
+              onClick={() => resendFrom(messages.map((m) => m.role).lastIndexOf("user"))}
+              disabled={streaming}
+              className="shrink-0 rounded-md bg-state-error/15 px-2 py-1 text-body-sm text-state-error transition-colors hover:bg-state-error/25 disabled:opacity-40"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 

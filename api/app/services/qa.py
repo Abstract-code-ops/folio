@@ -243,6 +243,9 @@ def build_turn_diagnostics(
     citation_count: int,
     answer_chars: int,
     error: Optional[str],
+    reasoning: str = "",
+    ttft_ms: Optional[int] = None,
+    total_ms: Optional[int] = None,
 ) -> dict[str, Any]:
     """Record what happened during a turn, for the eval page.
 
@@ -281,6 +284,9 @@ def build_turn_diagnostics(
         ],
         "citations": citation_count,
         "answer_chars": answer_chars,
+        "reasoning": reasoning,
+        "ttft_ms": ttft_ms,
+        "total_ms": total_ms,
         "error": error,
     }
 

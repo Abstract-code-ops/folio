@@ -19,6 +19,8 @@ r2 = httpx.post(
         'Authorization': f'Bearer {key}',
         'apikey': key,
         'Content-Type': 'application/pdf',
+        'cache-control': 'public, max-age=31536000, immutable',
+        'x-upsert': 'true',
     },
     content=data,
 )

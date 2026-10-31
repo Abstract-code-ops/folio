@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Routing is a classification step, not generation. If it has not answered in
 # this long the provider is unhealthy, and waiting the full generation timeout
 # would leave the student staring at a blank panel.
-_DECISION_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_DECISION_TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=15.0, pool=10.0)
 # Injected by the caller: query -> passages, and passages -> context string.
 SearchFn = Callable[[str], Awaitable[Sequence[Any]]]
 ComposeFn = Callable[[Sequence[Any]], str]
@@ -260,6 +260,62 @@ class BookAgent:
         self.queries.append(question)
         self.passages.extend(found)
 
+    def _answer_passages(self) -> list[Any]:
+        """Dedupe the accumulated passages and cap what the answer is built from.
+
+        Several searches can return overlapping passages. Composing all of them
+        inflates the prompt (and the provider-failure surface) without adding
+        information, so keep the best ``retrieval_top_k`` matches by distance,
+        plus up to that many context passages (neighbours / parent summaries).
+        The result is also assigned back to ``self.passages`` so the citation
+        numbers in the answer line up with exactly what was sent.
+        """
+        limit = max(1, settings.retrieval_top_k)
+
+        def key_of(passage: Any) -> tuple:
+            section_id = getattr(getattr(passage, "section", None), "id", None)
+            chunk_index = getattr(passage, "chunk_index", None)
+            if section_id is None and chunk_index is None:
+                return ("obj", id(passage))
+            return (section_id, chunk_index)
+
+        matches: dict[tuple, Any] = {}
+        contexts: list[tuple[tuple, Any]] = []
+
+        for passage in self.passages:
+            key = key_of(passage)
+            if getattr(passage, "role", "match") == "match":
+                distance = getattr(passage, "distance", None)
+                distance = distance if distance is not None else float("inf")
+                prev = matches.get(key)
+                prev_distance = getattr(prev, "distance", None)
+                if prev is None or distance < (
+                    prev_distance if prev_distance is not None else float("inf")
+                ):
+                    matches[key] = passage
+            else:
+                contexts.append((key, passage))
+
+        ordered = sorted(
+            matches.values(),
+            key=lambda p: getattr(p, "distance", None)
+            if getattr(p, "distance", None) is not None
+            else float("inf"),
+        )
+        kept = ordered[:limit]
+
+        kept_keys = {key_of(p) for p in kept}
+        seen: set[tuple] = set()
+        for key, passage in contexts:
+            if key in kept_keys or key in seen:
+                continue
+            seen.add(key)
+            kept.append(passage)
+            if len(seen) >= limit:
+                break
+
+        return kept
+
     async def stream(
         self,
         question: str,
@@ -297,6 +353,7 @@ class BookAgent:
             await self._search_directly(question)
 
         if self.passages:
+            self.passages = self._answer_passages()
             context = self._compose(self.passages)
             async for event_bytes in answer_question_stream(
                 question=question,

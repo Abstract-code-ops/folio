@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { userScopedStorage } from "./user-scope";
 import type {
   BlockKind,
   BlockOrigin,
@@ -68,6 +69,7 @@ export const useNotesCache = create<NotesCacheState>()(
     }),
     {
       name: "folio-notes-cache",
+      storage: createJSONStorage(() => userScopedStorage()),
       // Entries past the TTL are useless on load: drop them rather than render
       // a list from an earlier session as if it were current.
       onRehydrateStorage: () => (state) => {
@@ -127,6 +129,10 @@ export type LocalNote = {
   createdAt: number;
   updatedAt: number;
   blocks: LocalBlock[];
+  /** Client-only lifecycle. Absent = settled; "generating" = AI still working. */
+  status?: "generating" | "error";
+  /** Human-readable error when status === "error". */
+  error?: string | null;
 };
 
 /** Where a local note came from. "typed" is the editor's own output. */
@@ -286,7 +292,21 @@ export const useNotesStore = create<NotesStore>()(
           pendingDeletes: state.pendingDeletes.filter((id) => !ids.includes(id)),
         })),
     }),
-    { name: "folio-notes" },
+    {
+      name: "folio-notes",
+      storage: createJSONStorage(() => userScopedStorage()),
+      // A background generation cannot survive a reload; a note still marked
+      // "generating" at load is orphaned — flag it instead of spinning forever.
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        for (const note of Object.values(state.notes)) {
+          if (note.status === "generating") {
+            note.status = "error";
+            note.error = "Generation was interrupted. Try again.";
+          }
+        }
+      },
+    },
   ),
 );
 

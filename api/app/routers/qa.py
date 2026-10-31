@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -111,6 +111,7 @@ async def summarize(
 
 @router.get("/turns", response_model=QaTurnListResponse)
 async def list_turns(
+    response: Response,
     book_id: uuid.UUID | None = None,
     limit: int = 50,
     user_id: uuid.UUID = Depends(get_current_user),
@@ -120,6 +121,7 @@ async def list_turns(
     Declared before ``POST /{book_id}`` so the literal path is matched rather
     than captured as a book id. Scoped to the current user.
     """
+    response.headers["Cache-Control"] = "private, max-age=10"
     async with AsyncSessionLocal() as db:
         rows = await list_recent_turns(
             db, user_id=user_id, book_id=book_id, limit=limit
@@ -211,6 +213,9 @@ async def _qa_stream(
     passages: list[ContextPassage] = []
     queries: list[str] = []
     stream_error: str | None = None
+    reasoning_text: str = ""
+    ttft_ms: int | None = None
+    total_ms: int | None = None
     qa_mode = "agent" if settings.qa_agent_enabled else "legacy"
 
     async with AsyncSessionLocal() as db:
@@ -239,9 +244,15 @@ async def _qa_stream(
                 async for event in agent.stream(
                     question, summary=summary, history=history
                 ):
-                    if event.get("type") == "token":
+                    etype = event.get("type")
+                    if etype == "reasoning":
+                        reasoning_text = event.get("text") or ""
+                        ttft_ms = event.get("ttft_ms")
+                        total_ms = event.get("total_ms")
+                        continue  # eval-only — not shown in the chat
+                    if etype == "token":
                         full_answer += event.get("text", "")
-                    if event.get("type") == "error":
+                    if etype == "error":
                         stream_error = event.get("text")
                     yield json.dumps(event).encode() + b"\n"
                 queries = list(agent.queries)
@@ -267,6 +278,11 @@ async def _qa_stream(
                     history=history,
                 ):
                     event = json.loads(event_bytes)
+                    if event.get("type") == "reasoning":
+                        reasoning_text = event.get("text") or ""
+                        ttft_ms = event.get("ttft_ms")
+                        total_ms = event.get("total_ms")
+                        continue
                     if event.get("type") == "token":
                         full_answer += event.get("text", "")
                     if event.get("type") == "error":
@@ -288,6 +304,9 @@ async def _qa_stream(
                 passages=passages,
                 citation_count=len(citations),
                 answer_chars=len(full_answer),
+                reasoning=reasoning_text,
+                ttft_ms=ttft_ms,
+                total_ms=total_ms,
                 error=stream_error,
             )
             qa_message = QAMessage(

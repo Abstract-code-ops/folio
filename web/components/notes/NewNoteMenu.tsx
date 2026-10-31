@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
 import { Loader } from "@/components/ui/loader";
 import { makeLocalNote, useNotesStore, type LocalBlock } from "@/lib/notes-store";
+import { startTopicNoteGeneration } from "@/lib/note-generation";
+import { startChapterNoteGeneration } from "@/lib/note-generation";
 import type { NoteTopicEvent } from "@/types/notes";
 
 /**
@@ -106,91 +108,26 @@ export function NewNoteMenu({
     onCreated(null, true);
   }, [busy, close, onCreated]);
 
-  const generateFromTopic = useCallback(async () => {
+  const generateFromTopic = useCallback(() => {
     const value = topic.trim();
-    if (!value || busy) return;
+    if (!value) return;
+    // Runs in the background: a placeholder note appears immediately and
+    // finishes on its own even if the student leaves this panel.
+    startTopicNoteGeneration(bookId, value);
+    setTopic("");
+    close();
+  }, [bookId, topic, close]);
 
-    setBusy(true);
-    setError(null);
-    setCards([]);
-    setStatus("Reading the book for this topic…");
-
-    try {
-      const stream = await apiClient.generateTopicNotes(bookId, value);
-      const reader = stream.getReader();
-      let doneBlocks: LocalBlock[] | null = null;
-      let doneTitle: string | null = null;
-
-      while (true) {
-        const { done, value: next } = await reader.read();
-        if (done) break;
-        const event = next;
-        if (!event) continue;
-
-        switch (event.type) {
-          case "card":
-            setCards((seen) => [...seen, event.concept]);
-            break;
-          case "done":
-            doneBlocks = blocksFromDone(event);
-            doneTitle = event.title;
-            break;
-          case "not_covered":
-          case "error":
-            setError(event.message);
-            break;
-        }
-      }
-
-      if (doneBlocks) {
-        const note = makeLocalNote(bookId, {
-          title: doneTitle,
-          source: "ai_generated",
-          blocks: doneBlocks,
-        });
-        useNotesStore.getState().saveNote(note);
-        close();
-        setTopic("");
-        onCreated(note.id, false);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't generate notes");
-    } finally {
-      setBusy(false);
-      setStatus(null);
-    }
-  }, [bookId, busy, close, onCreated, topic]);
-
-  const generateChapterRange = useCallback(async () => {
-    if (chapterEnd < chapterStart || busy) return;
-
-    setBusy(true);
-    setError(null);
-    setStatus("Generating notes for the range…");
-
-    try {
-      const stream = await apiClient.generateNotes(
-        bookId,
-        chapterStart,
-        chapterEnd,
-      );
-      const reader = stream.getReader();
-      // Drain: each section emits its own coverage event server-side.
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-      close();
-      setChapterStart(0);
-      setChapterEnd(0);
-      onRefresh?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't generate notes");
-    } finally {
-      setBusy(false);
-      setStatus(null);
-    }
-  }, [bookId, busy, chapterEnd, chapterStart, close, onRefresh]);
+  const generateChapterRange = useCallback(() => {
+    if (chapterEnd < chapterStart) return;
+    // Runs in the background: a placeholder note appears in the list and
+    // finishes on its own even if the student leaves.
+    startChapterNoteGeneration(bookId, chapterStart, chapterEnd);
+    close();
+    setChapterStart(0);
+    setChapterEnd(0);
+    onRefresh?.();
+  }, [bookId, chapterStart, chapterEnd, close, onRefresh]);
 
   const item = (
     icon: React.ReactNode,
@@ -310,17 +247,10 @@ export function NewNoteMenu({
                 </button>
                 <button
                   onClick={generateFromTopic}
-                  disabled={!topic.trim() || busy}
+                  disabled={!topic.trim()}
                   className="flex min-h-11 items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-body-sm text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-30 sm:min-h-0"
                 >
-                  {busy ? (
-                    <>
-                      <Loader variant="dots" />
-                      Generating…
-                    </>
-                  ) : (
-                    "Generate notes"
-                  )}
+                  Generate in background
                 </button>
               </div>
             </div>
@@ -374,17 +304,10 @@ export function NewNoteMenu({
                 </button>
                 <button
                   onClick={generateChapterRange}
-                  disabled={chapterEnd < chapterStart || busy}
+                  disabled={chapterEnd < chapterStart}
                   className="flex min-h-11 items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-body-sm text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-30 sm:min-h-0"
                 >
-                  {busy ? (
-                    <>
-                      <Loader variant="dots" />
-                      Generating…
-                    </>
-                  ) : (
-                    "Generate notes"
-                  )}
+                  Generate in background
                 </button>
               </div>
             </div>

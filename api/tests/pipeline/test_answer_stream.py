@@ -52,7 +52,12 @@ async def _collect(context: str = "ctx") -> list[dict]:
     async for raw in qa_chain.answer_question_stream(
         question="what is a shard?", context=context, summary=None, history=None
     ):
-        events.append(json.loads(raw))
+        event = json.loads(raw)
+        # The "reasoning" event carries model timings/reasoning for the eval; it
+        # is meta, not an answer event, so these assertions ignore it.
+        if event.get("type") == "reasoning":
+            continue
+        events.append(event)
     return events
 
 

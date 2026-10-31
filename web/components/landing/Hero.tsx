@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { landing } from "@/content/landing";
+import { AuthNav } from "@/components/auth/auth-nav";
 import { Shelf } from "./Shelf";
 
 export function Hero() {
@@ -29,9 +30,7 @@ export function Hero() {
             >
               {landing.nav.about}
             </a>
-            <span className="font-heading text-body-sm text-text-muted">
-              {landing.nav.signIn}
-            </span>
+            <AuthNav />
           </div>
         </nav>
 

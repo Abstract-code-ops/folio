@@ -97,12 +97,14 @@ class ApiClient {
     options?: {
       summary?: string;
       history?: { role: string; content: string }[];
+      signal?: AbortSignal;
     },
   ): Promise<ReadableStream<QaEvent>> {
     const url = `${this.baseUrl}/qa/${bookId}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: options?.signal,
       body: JSON.stringify({
         question,
         summary: options?.summary,

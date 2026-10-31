@@ -52,6 +52,12 @@ function DiagnosticsBlock({ diagnostics }: { diagnostics: TurnDiagnostics }) {
         <span className="text-body-sm text-text-subtle">
           {diagnostics.retrieved.length} passages · {diagnostics.citations} citations ·{" "}
           {diagnostics.answer_chars} chars
+          {typeof diagnostics.ttft_ms === "number"
+            ? ` · ttft ${(diagnostics.ttft_ms / 1000).toFixed(2)}s`
+            : ""}
+          {typeof diagnostics.total_ms === "number"
+            ? ` · total ${(diagnostics.total_ms / 1000).toFixed(2)}s`
+            : ""}
         </span>
       </div>
 
@@ -67,6 +73,17 @@ function DiagnosticsBlock({ diagnostics }: { diagnostics: TurnDiagnostics }) {
           {diagnostics.error}
         </p>
       )}
+
+      {diagnostics.reasoning ? (
+        <details className="rounded-md border border-border-subtle bg-bg-base px-2 py-1">
+          <summary className="cursor-pointer text-body-sm text-text-subtle">
+            model reasoning ({diagnostics.reasoning.length} chars)
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-text-muted">
+            {diagnostics.reasoning}
+          </p>
+        </details>
+      ) : null}
 
       {diagnostics.retrieved.length > 0 && (
         <div className="space-y-1">
