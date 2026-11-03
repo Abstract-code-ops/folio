@@ -17,7 +17,7 @@ import {
   useNotesNav,
   useNotesStore,
 } from "@/lib/notes-store";
-import { syncBook } from "@/lib/sync";
+import { pullLatest } from "@/lib/sync";
 import { NewNoteMenu } from "./NewNoteMenu";
 import { NoteEditor } from "./NoteEditor";
 import { NoteView } from "./NoteView";
@@ -90,8 +90,8 @@ export function NotesPanel({
     URL.revokeObjectURL(url);
   };
 
-  // Cross-device sync: push this device's edits, then pull the server's current
-  // notes + chat for this book. Rate-limited with a short cooldown.
+  // Get latest: pull the server's current notes + chat into this device
+  // (read-only pull). Rate-limited with a short cooldown.
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
@@ -102,7 +102,7 @@ export function NotesPanel({
     if (syncing || cooldown > 0) return;
     setSyncing(true);
     try {
-      await syncBook(bookId);
+      await pullLatest(bookId);
     } catch {
       // best-effort; the button re-enables after the cooldown
     } finally {
@@ -175,7 +175,7 @@ export function NotesPanel({
               className={cn("h-3.5 w-3.5", syncing && "animate-spin")}
               strokeWidth={1.5}
             />
-            {syncing ? "Syncing…" : cooldown > 0 ? `Sync (${cooldown})` : "Sync"}
+            {syncing ? "Syncing…" : cooldown > 0 ? `Get latest (${cooldown})` : "Get latest"}
           </button>
         </div>
         {generating && (

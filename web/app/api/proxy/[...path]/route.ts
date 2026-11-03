@@ -16,16 +16,37 @@ const API_BASE = process.env.API_URL ?? "http://api:8000";
 // An explicit incoming Authorization header wins (useful for tests/tools).
 // If the auth tables do not exist yet or the DB is unreachable, we fall through
 // to no auth rather than failing the request.
+// Short-lived server-side cache of resolved Authorization headers, keyed by the
+// incoming cookie. better-auth's getSession queries the session table in
+// Postgres; against a remote DB that is a ~0.5s round trip on EVERY proxied
+// request. Caching the resolved Bearer removes it. The API still validates the
+// token, so a revoked/expired session is caught there.
+const RESOLVED_TTL_MS = 60_000;
+const resolvedAuth = new Map<string, { authorization: string | null; at: number }>();
+
 async function resolveAuthorization(request: NextRequest): Promise<string | null> {
   const existing = request.headers.get("authorization");
   if (existing) return existing;
+
+  const key = request.headers.get("cookie") ?? "";
+  const now = Date.now();
+  const hit = resolvedAuth.get(key);
+  if (hit && now - hit.at < RESOLVED_TTL_MS) return hit.authorization;
+
+  let authorization: string | null = null;
   try {
     const session = await auth.api.getSession({ headers: request.headers });
     const token = session?.session?.token;
-    return token ? `Bearer ${token}` : null;
+    if (token) authorization = `Bearer ${token}`;
   } catch {
-    return null;
+    authorization = null;
   }
+
+  if (key) {
+    if (resolvedAuth.size > 2000) resolvedAuth.clear();
+    resolvedAuth.set(key, { authorization, at: now });
+  }
+  return authorization;
 }
 
 // Headers worth carrying back to the browser so repeat navigations can be
@@ -135,4 +156,12 @@ export async function DELETE(
 ) {
   const { path } = await params;
   return forward(request, path, "DELETE");
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  const { path } = await params;
+  return forward(request, path, "PATCH");
 }

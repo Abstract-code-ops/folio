@@ -15,6 +15,7 @@
 
 import { useEffect, useRef } from "react";
 import { authClient } from "@/lib/auth-client";
+import { setAuthed } from "@/lib/guest";
 import { getRememberedUserId, rememberUserId } from "@/lib/user-scope";
 
 export function AuthBridge() {
@@ -25,6 +26,8 @@ export function AuthBridge() {
   useEffect(() => {
     if (isPending || ran.current) return;
     ran.current = true;
+
+    setAuthed(Boolean(userId));
 
     if (getRememberedUserId() !== userId) {
       rememberUserId(userId);

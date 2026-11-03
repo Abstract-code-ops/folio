@@ -276,3 +276,62 @@ def test_chunk_result_exposes_page_fields() -> None:
     assert isinstance(chunk, ChunkResult)
     assert chunk.page_start == 7
     assert chunk.page_end == 7
+
+
+# --------------------------------------------------------------------------
+# Tables (Unit B)
+# --------------------------------------------------------------------------
+
+
+def _table_md(rows: int) -> str:
+    lines = ["| Shard | Range |", "| --- | --- |"]
+    for i in range(rows):
+        lines.append(f"| shard{i} | range{i} |")
+    return "\n".join(lines)
+
+
+def test_table_block_becomes_one_table_chunk() -> None:
+    prose = "Intro paragraph about sharding that is long enough to stand alone. " * 3
+    blocks = [
+        _Block(prose, page=98),
+        _Block(_table_md(4), page=98, block_type="table"),
+    ]
+
+    chunks = chunk_section(blocks=blocks)
+
+    table_chunks = [c for c in chunks if c.kind == "table"]
+    assert len(table_chunks) == 1
+    assert table_chunks[0].content.startswith("| Shard | Range |")
+    assert table_chunks[0].page_start == 98
+
+
+def test_table_is_not_merged_with_prose() -> None:
+    blocks = [
+        _Block(_words(60, "before"), page=1),
+        _Block(_table_md(3), page=1, block_type="table"),
+        _Block(_words(60, "after"), page=1),
+    ]
+
+    chunks = chunk_section(blocks=blocks)
+
+    assert [c.kind for c in chunks].count("table") == 1
+    table_chunk = next(c for c in chunks if c.kind == "table")
+    assert "before0" not in table_chunk.content
+    assert "after0" not in table_chunk.content
+
+
+def test_oversized_table_is_split_by_rows_with_header_repeated() -> None:
+    blocks = [_Block(_table_md(40), page=5, block_type="table")]
+
+    chunks = chunk_section(blocks=blocks, max_words=30)
+
+    table_chunks = [c for c in chunks if c.kind == "table"]
+    assert len(table_chunks) > 1
+    for chunk in table_chunks:
+        assert chunk.content.startswith("| Shard | Range |\n| --- | --- |")
+        assert chunk.word_count <= 30
+
+
+def test_plain_text_chunks_are_kind_text() -> None:
+    chunks = chunk_section("A paragraph.\n\nAnother paragraph.")
+    assert all(chunk.kind == "text" for chunk in chunks)

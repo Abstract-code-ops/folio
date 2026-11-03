@@ -5,6 +5,10 @@ from a single model definition.
 
 The async engine is derived from the configured ``database_url``
 by swapping the driver to asyncpg (see ``config.make_async_dsn``).
+
+Connection pooling is sized for Supabase's **session-mode pooler**, which caps
+total clients at 15. The async and sync pools share that budget, so both are
+kept small (async 5+3 = 8, sync 2+2 = 4) to leave headroom.
 """
 
 from __future__ import annotations
@@ -116,8 +120,12 @@ class TimestampMixin:
 async_engine = create_async_engine(
     settings.database_url_async,
     echo=False,
-    pool_size=10,
-    max_overflow=20,
+    # Supabase's session-mode pooler caps TOTAL clients at 15. Keep the async
+    # pool small so async + sync pools together stay under that cap (8 + 4).
+    pool_size=5,
+    max_overflow=3,
+    pool_recycle=1800,
+    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -163,9 +171,12 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
 sync_engine = create_engine(
     settings.database_url,
     echo=False,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=2,
+    max_overflow=2,
+    pool_recycle=1800,
+    pool_pre_ping=True,
 )
+
 
 SyncSessionLocal = sessionmaker(
     bind=sync_engine,

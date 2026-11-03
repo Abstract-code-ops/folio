@@ -23,8 +23,10 @@ invariant and the existing citation discipline intact.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any, Optional
 
@@ -76,6 +78,7 @@ Decide what the student's message needs, then act:
 
 - Greeting, thanks, or small talk: reply briefly and warmly in one or two sentences and invite a question about the book. Do NOT call search_book.
 - A question this book might answer: call search_book with a short, specific query, spelled the way the book would spell it. Never answer a book question from memory.
+- If two or more searches would help (e.g. related sub-topics, or a broad term plus a specific one), issue them together in the SAME response so they run in parallel — do not search, read, then search again.
 - Only if the message is obviously unrelated to this book (weather, sport, other books, general trivia): say briefly that you only cover this book. Do NOT call search_book.
 
 Misspellings, typos, abbreviations and half-remembered terms are NOT off-topic. Work out what the student meant, fix the spelling in your query, and search. For example "as tables instd of ss tables" is a misspelled request about SSTables: search for "SSTable", do not decline it.
@@ -198,6 +201,7 @@ class BookAgent:
                 tools=[SEARCH_TOOL],
                 tool_choice="auto",
                 temperature=self.temperature,
+                reasoning_effort=settings.qa_reasoning_effort,
                 timeout=_DECISION_TIMEOUT,
             )
             message = response.choices[0].message
@@ -209,15 +213,26 @@ class BookAgent:
 
             messages.append(_tool_call_message(message, calls))
 
+            # Plan this round's new, unique, in-budget queries first, so a round
+            # that asks for several can be retrieved concurrently.
+            plan: list[tuple[Any, str]] = []
+            over_budget = False
             for call in calls:
-                if len(self.queries) >= self.max_searches:
-                    logger.info(
-                        "Agent hit the search limit (%d); answering from what it has",
-                        self.max_searches,
+                if len(self.queries) + len(plan) >= self.max_searches:
+                    over_budget = True
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": (
+                                "Search limit reached; answer from the results "
+                                "already retrieved."
+                            ),
+                        }
                     )
-                    return None
+                    continue
                 query = _query_from(call, messages[-2]["content"])
-                if query in self.queries:
+                if query in self.queries or any(query == q for _, q in plan):
                     # Re-searching the identical query doubles the context for
                     # no new information; a second round is for refining.
                     logger.info("Agent repeated %r; not searching again", query)
@@ -229,12 +244,20 @@ class BookAgent:
                         }
                     )
                     continue
-                found = list(await self._search(query) or [])
+                plan.append((call, query))
+
+            async def _run(query: str) -> list[Any]:
+                return list(await self._search(query) or [])
+
+            results = (
+                await asyncio.gather(*(_run(query) for _, query in plan))
+                if plan
+                else []
+            )
+            for (call, query), found in zip(plan, results):
                 self.queries.append(query)
                 self.passages.extend(found)
-                logger.info(
-                    "Agent searched %r -> %d passage(s)", query, len(found)
-                )
+                logger.info("Agent searched %r -> %d passage(s)", query, len(found))
                 messages.append(
                     {
                         "role": "tool",
@@ -245,6 +268,9 @@ class BookAgent:
                         ),
                     }
                 )
+
+            if over_budget:
+                return None
 
         return None
 
@@ -260,7 +286,35 @@ class BookAgent:
         self.queries.append(question)
         self.passages.extend(found)
 
-    def _answer_passages(self) -> list[Any]:
+    def _rerank(self, question: str, matches: list[Any]) -> list[Any]:
+        """Reorder candidate matches by relevance to the question.
+
+        Lightweight hybrid: lower embedding distance is better, plus a lexical
+        overlap bonus for passages that actually contain the question's terms.
+        Dependency-free; a cross-encoder can replace this body later.
+        """
+        if not settings.rerank_enabled or len(matches) <= 1:
+            return sorted(
+                matches,
+                key=lambda p: getattr(p, "distance", None)
+                if getattr(p, "distance", None) is not None
+                else float("inf"),
+            )
+
+        terms = {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 2}
+
+        def score(passage: Any) -> float:
+            content = (getattr(passage, "content", "") or "").lower()
+            overlap = (
+                sum(1 for term in terms if term in content) / max(1, len(terms))
+            )
+            distance = getattr(passage, "distance", None)
+            distance = distance if distance is not None else 1.0
+            return overlap - distance
+
+        return sorted(matches, key=score, reverse=True)
+
+    def _answer_passages(self, question: str) -> list[Any]:
         """Dedupe the accumulated passages and cap what the answer is built from.
 
         Several searches can return overlapping passages. Composing all of them
@@ -296,12 +350,7 @@ class BookAgent:
             else:
                 contexts.append((key, passage))
 
-        ordered = sorted(
-            matches.values(),
-            key=lambda p: getattr(p, "distance", None)
-            if getattr(p, "distance", None) is not None
-            else float("inf"),
-        )
+        ordered = self._rerank(question, list(matches.values()))
         kept = ordered[:limit]
 
         kept_keys = {key_of(p) for p in kept}
@@ -353,7 +402,7 @@ class BookAgent:
             await self._search_directly(question)
 
         if self.passages:
-            self.passages = self._answer_passages()
+            self.passages = self._answer_passages(question)
             context = self._compose(self.passages)
             async for event_bytes in answer_question_stream(
                 question=question,

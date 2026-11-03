@@ -7,6 +7,7 @@ import { useBooksStore } from "@/lib/store";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
 import { AuthNav } from "@/components/auth/auth-nav";
+import { ProductTour } from "@/components/tour/ProductTour";
 import type { IngestionStatus, BookResponse } from "@/types/books";
 
 const STATUS_LABEL: Record<IngestionStatus, string> = {
@@ -23,12 +24,8 @@ const STATUS_DOT: Record<IngestionStatus, string> = {
   failed: "bg-state-error",
 };
 
-const FILTERS: { id: IngestionStatus | "all"; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "completed", label: "Ready" },
-  { id: "processing", label: "Processing" },
-  { id: "not_started", label: "Not started" },
-];
+// The library only surfaces fully-ingested books; not-started and processing
+// books are hidden until they're ready.
 
 function BookCover({
   title,
@@ -64,19 +61,13 @@ function BookCard({ book }: { book: BookResponse }) {
     >
       <div className="relative aspect-[3/4] bg-bg-surface">
         <BookCover title={book.title} cover_image_url={book.cover_image_url} />
-        <span className="absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-bg-base/80 px-2 py-0.5 backdrop-blur">
-          <span
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              STATUS_DOT[book.ingestion_status],
-            )}
-          />
-          <span className="text-body-sm text-text-muted">
-            {STATUS_LABEL[book.ingestion_status]}
-          </span>
-        </span>
       </div>
       <div className="flex flex-col gap-1 p-4">
+        {book.category && (
+          <span className="text-[11px] font-medium uppercase tracking-wide text-accent">
+            {book.category}
+          </span>
+        )}
         <h3 className="font-heading text-body font-semibold text-text-primary truncate">
           {book.title}
         </h3>
@@ -117,23 +108,34 @@ export default function LibraryPage() {
   const fetchBooks = useBooksStore((s) => s.fetchBooks);
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<IngestionStatus | "all">("all");
+  const [category, setCategory] = useState<string>("all");
 
   useEffect(() => {
     fetchBooks();
   }, [fetchBooks]);
 
+  // Category chips are derived from the (completed) books themselves.
+  const available = useMemo(
+    () => books.filter((b) => b.ingestion_status === "completed"),
+    [books],
+  );
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of available) if (b.category) set.add(b.category);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [available]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return books.filter((b) => {
+    return available.filter((b) => {
       const matchesQuery =
         !q ||
         b.title.toLowerCase().includes(q) ||
         (b.author ?? "").toLowerCase().includes(q);
-      const matchesStatus = status === "all" || b.ingestion_status === status;
-      return matchesQuery && matchesStatus;
+      const matchesCategory = category === "all" || b.category === category;
+      return matchesQuery && matchesCategory;
     });
-  }, [books, query, status]);
+  }, [available, query, category]);
 
   return (
     <div className="min-h-screen bg-bg-base">
@@ -150,16 +152,17 @@ export default function LibraryPage() {
 
       {/* Content */}
       <main className="mx-auto max-w-5xl px-6 py-10">
+        <ProductTour page="library" />
         <div className="mb-8">
           <h1 className="font-heading text-h3 text-text-primary">Library</h1>
           <p className="text-body text-text-muted mt-1">
-            Open-access CS and software engineering textbooks.
+            Hand-picked open-access textbooks across many fields.
           </p>
         </div>
 
-        {/* Search + filters */}
+        {/* Search + category filters */}
         <div className="mb-8 space-y-4">
-          <div className="relative">
+          <div className="relative" data-tour="tour-search">
             <Search
               className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-subtle"
               strokeWidth={1.5}
@@ -172,22 +175,26 @@ export default function LibraryPage() {
               className="w-full rounded-lg border border-border bg-bg-elevated py-2.5 pl-10 pr-4 text-body text-text-primary placeholder-text-subtle outline-none focus:border-accent/50 transition-colors"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setStatus(f.id)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-body-sm transition-colors",
-                  status === f.id
-                    ? "bg-accent text-white"
-                    : "bg-bg-elevated text-text-muted hover:text-text-primary border border-border",
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+
+          {/* Category chips (from the books) */}
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-2" data-tour="tour-categories">
+              {["all", ...categories].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCategory(c)}
+                  className={cn(
+                    "rounded-full px-3 py-1 text-body-sm transition-colors",
+                    category === c
+                      ? "bg-accent text-white"
+                      : "bg-bg-elevated text-text-muted hover:text-text-primary border border-border",
+                  )}
+                >
+                  {c === "all" ? "All categories" : c}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* States */}
@@ -210,13 +217,16 @@ export default function LibraryPage() {
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <Library className="h-8 w-8 text-text-subtle mb-4" />
             <p className="text-body text-text-muted max-w-sm">
-              {books.length === 0
-                ? "No textbooks are available yet. Check back soon."
-                : "No books match your search."}
+              {available.length === 0
+                ? "No books are available yet. Check back soon."
+                : "No books match your filters."}
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <div
+            data-tour="tour-grid"
+            className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+          >
             {filtered.map((book) => (
               <BookCard key={book.id} book={book} />
             ))}

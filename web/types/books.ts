@@ -10,6 +10,7 @@ export interface BookResponse {
   id: string;
   title: string;
   author: string;
+  category: string | null;
   description: string | null;
   cover_image_url: string | null;
   storage_url: string;

@@ -33,11 +33,14 @@ import dramatiq
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import SyncSessionLocal
 from app.core.llm import embed_text
+from app.core.storage import upload_bytes
 from app.models.book import Book, IngestionStatus
 from app.models.chunk import Chunk
 from app.models.section import Section
+from app.pipeline import figure
 from app.pipeline.chunker import chunk_section
 from app.pipeline.embed_inputs import (
     EMBED_VERSION,
@@ -46,7 +49,8 @@ from app.pipeline.embed_inputs import (
     section_embed_text,
 )
 from app.pipeline.metadata import extract_metadata_batch
-from app.pipeline.parser import ParsedSection, ParseResult, parse_pdf
+from app.pipeline.parser import ParsedSection, ParseResult, download_pdf, parse_pdf
+from app.pipeline.pdf_optimize import optimize_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -275,8 +279,9 @@ async def persist_parse_result(
                     content=chunk.content,
                     page_start=chunk.page_start,
                     page_end=chunk.page_end,
+                    kind=chunk.kind,
                     embedding=await embedder(
-                        chunk_embed_text(breadcrumb, chunk.content)
+                        chunk_embed_text(breadcrumb, chunk.content, kind=chunk.kind)
                     ),
                     embed_version=EMBED_VERSION,
                 )
@@ -323,6 +328,211 @@ def _needs_upgrade(db: Session, book: Book) -> bool:
     return False
 
 
+# ── Figure ingestion ────────────────────────────────────────
+
+
+def _section_for_page(
+    sections: Sequence[Section], page: int
+) -> tuple[Optional[Section], int]:
+    """The document-order section whose page range contains ``page`` (last wins)."""
+    best: tuple[Optional[Section], int] = (None, -1)
+    for index, section in enumerate(sections):
+        start, end = section.page_start, section.page_end
+        if start is not None and end is not None and start <= page <= end:
+            best = (section, index)
+    return best
+
+
+async def _ingest_figures(
+    db: Session,
+    book: Book,
+    parse_result: ParseResult,
+    *,
+    doc,
+    generator,
+    pacer,
+    embedder: Embedder = embed_text,
+    max_per_section: int | None = None,
+) -> int:
+    """Detect figures, caption them, and persist figure chunks.
+
+    Idempotent: a figure whose (section, page, bbox) already has a figure chunk
+    is skipped, so a re-run continues where a quota soft-stop left off.
+    """
+    sections = sorted(
+        list(db.scalars(select(Section).where(Section.book_id == book.id))),
+        key=_doc_order,
+    )
+    if not sections:
+        return 0
+
+    paths = _ancestor_titles(parse_result.sections)
+
+    exclude = [
+        (block.page, tuple(block.bbox))
+        for section in parse_result.sections
+        for block in section.blocks
+        if block.block_type == "table"
+    ]
+    regions = figure.iter_figure_regions(
+        doc,
+        exclude=exclude,
+        min_area_ratio=settings.figure_min_area_ratio,
+        min_side=settings.figure_min_side,
+        gap=settings.figure_cluster_gap,
+    )
+    if not regions:
+        return 0
+
+    cap = max_per_section if max_per_section is not None else settings.figure_max_per_section
+
+    section_ids = [section.id for section in sections]
+    next_index: dict[uuid.UUID, int] = {}
+    seen: set[tuple] = set()
+    for chunk in db.scalars(select(Chunk).where(Chunk.section_id.in_(section_ids))):
+        next_index[chunk.section_id] = max(
+            next_index.get(chunk.section_id, 0), chunk.chunk_index + 1
+        )
+        if chunk.kind == "figure" and chunk.bbox:
+            b = chunk.bbox
+            seen.add(
+                (
+                    chunk.section_id,
+                    chunk.page_start,
+                    round(float(b.get("x0", 0.0)), 1),
+                    round(float(b.get("y0", 0.0)), 1),
+                    round(float(b.get("x1", 0.0)), 1),
+                    round(float(b.get("y1", 0.0)), 1),
+                )
+            )
+
+    created = 0
+    per_section: dict[uuid.UUID, int] = {}
+    for page_no, bbox in regions:
+        section, index = _section_for_page(sections, page_no)
+        if section is None:
+            continue
+        if per_section.get(section.id, 0) >= cap:
+            continue
+        key = (
+            section.id,
+            page_no,
+            round(float(bbox[0]), 1),
+            round(float(bbox[1]), 1),
+            round(float(bbox[2]), 1),
+            round(float(bbox[3]), 1),
+        )
+        if key in seen:
+            continue
+        try:
+            png = figure.crop_png(doc.load_page(page_no - 1), bbox, settings.figure_dpi)
+            caption = await figure.caption_figure(
+                png,
+                section.heading,
+                section.raw_text or "",
+                generator=generator,
+                pacer=pacer,
+            )
+        except figure.QuotaExhausted:
+            log("[PIPELINE] Figure-caption quota reached; stopping figure phase (resumable)")
+            break
+        except Exception as exc:  # noqa: BLE001 - one bad figure must not fail ingest
+            log(f"[PIPELINE] Figure caption failed on page {page_no}: {exc}")
+            continue
+        if not caption:
+            continue
+
+        breadcrumb = (
+            build_breadcrumb(paths[index]) if index < len(paths) else section.heading
+        )
+        embedding = await embedder(chunk_embed_text(breadcrumb, caption, kind="figure"))
+        chunk_index = next_index.get(section.id, 0)
+        next_index[section.id] = chunk_index + 1
+        db.add(
+            Chunk(
+                section_id=section.id,
+                chunk_index=chunk_index,
+                content=caption,
+                kind="figure",
+                bbox={"x0": bbox[0], "y0": bbox[1], "x1": bbox[2], "y1": bbox[3]},
+                page_start=page_no,
+                page_end=page_no,
+                embedding=embedding,
+                embed_version=EMBED_VERSION,
+            )
+        )
+        seen.add(key)
+        per_section[section.id] = per_section.get(section.id, 0) + 1
+        created += 1
+
+    db.flush()
+    return created
+
+
+async def _run_figure_phase(db: Session, book: Book, parse_result: ParseResult) -> None:
+    """Open the PDF and caption figures for a freshly-persisted book."""
+    import fitz
+
+    try:
+        pdf_bytes = await download_pdf(book.storage_url)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:  # noqa: BLE001 - figures are best-effort
+        log(f"[PIPELINE] Figure phase skipped (could not open PDF): {exc}")
+        return
+
+    try:
+        pacer = figure.CaptionPacer(rpm=settings.figure_rpm, rpd=settings.figure_rpd)
+        generator = figure.gemini_generator(
+            model=settings.figure_caption_model,
+            max_tokens=settings.figure_max_tokens,
+        )
+        created = await _ingest_figures(
+            db, book, parse_result, doc=doc, generator=generator, pacer=pacer
+        )
+        db.commit()
+        log(f"[PIPELINE] Captioned {created} figure(s)")
+    except Exception as exc:  # noqa: BLE001 - never fail the whole ingest
+        db.rollback()
+        log(f"[PIPELINE] Figure phase failed: {exc}")
+    finally:
+        doc.close()
+
+
+async def _optimize_if_large(db: Session, book: Book) -> None:
+    """Re-write an oversized PDF with Ghostscript so the browser viewer can load it.
+
+    Only when the file exceeds the threshold AND Ghostscript yields a smaller
+    file. Points book.storage_url at the optimized copy; ingestion then parses
+    that copy (text/structure preserved).
+    """
+    if not settings.pdf_optimize_enabled:
+        return
+    try:
+        data = await download_pdf(book.storage_url)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[PIPELINE] Skipping PDF optimization (download failed): {exc}")
+        return
+    if len(data) <= settings.pdf_optimize_max_bytes:
+        return
+
+    log(f"[PIPELINE] PDF {len(data) // 1024} KB > threshold; optimizing with Ghostscript…")
+    optimized = await optimize_pdf(data, preset=settings.pdf_optimize_preset)
+    if optimized is None:
+        log("[PIPELINE] Optimization unavailable or no size gain; keeping original")
+        return
+    try:
+        url = await upload_bytes(f"optimized/{book.id}.pdf", optimized)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[PIPELINE] Optimized-PDF upload failed: {exc}")
+        return
+    book.storage_url = url
+    db.commit()
+    log(
+        f"[PIPELINE] Optimized {len(data) // 1024} KB -> {len(optimized) // 1024} KB; "
+        "storage_url updated"
+    )
+
+
 async def run_pipeline(
     db: Session,
     book: Book,
@@ -331,6 +541,8 @@ async def run_pipeline(
     skip_completed: bool = True,
 ) -> dict[str, int]:
     """Parse a book and persist it. Callable directly by the re-ingest script."""
+    await _optimize_if_large(db, book)
+
     log(f"[PIPELINE] Parsing {book.title!r}...")
     parse_result = await parse_pdf(book.storage_url)
     log(
@@ -352,6 +564,9 @@ async def run_pipeline(
         skip_completed=skip_completed,
     )
 
+    if settings.figures_enabled:
+        await _run_figure_phase(db, book, parse_result)
+
     book.section_count = len(parse_result.sections)
     book.word_count = parse_result.total_word_count
     book.ingestion_status = IngestionStatus.COMPLETED
@@ -372,9 +587,14 @@ async def run_pipeline(
     return stats
 
 
-@dramatiq.actor(max_retries=2, min_backoff=30_000, max_backoff=120_000)
-def ingest_book(book_id: str) -> None:
-    """Ingest a book: parse -> metadata -> chunk -> embed -> persist."""
+def run_ingest(book_id: str) -> None:
+    """Run the full ingestion for one book, standalone (no queue).
+
+    This is the portable unit of work. The API calls it in a background thread
+    today; moving ingestion to a dedicated server means calling this same
+    function there (and swapping ``trigger_ingestion`` to enqueue/message it) —
+    the pipeline does not change.
+    """
     parsed_id = uuid.UUID(book_id)
 
     with SyncSessionLocal() as db:
@@ -384,15 +604,11 @@ def ingest_book(book_id: str) -> None:
                 logger.warning("Book %s not found - skipping ingestion", book_id)
                 return
 
-            if book.ingestion_status == IngestionStatus.PROCESSING:
-                logger.warning("Book %s is already being ingested - skipping", book_id)
-                return
-
             if (
                 book.ingestion_status == IngestionStatus.COMPLETED
                 and not _needs_upgrade(db, book)
             ):
-                logger.info("Book %s already ingested at v2 - skipping", book_id)
+                logger.info("Book %s already ingested at current version - skipping", book_id)
                 return
 
             book.ingestion_status = IngestionStatus.PROCESSING
@@ -405,3 +621,9 @@ def ingest_book(book_id: str) -> None:
             db.commit()
             logger.exception("Ingestion failed for book %s", book_id)
             raise
+
+
+@dramatiq.actor(max_retries=2, min_backoff=30_000, max_backoff=120_000)
+def ingest_book(book_id: str) -> None:
+    """Dramatiq entry point — used only when a dedicated worker is run."""
+    run_ingest(book_id)

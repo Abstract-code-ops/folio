@@ -8,13 +8,13 @@ ground its answers.
 """
 
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import ForeignKey, Integer, SmallInteger, Text
+from sqlalchemy import ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.db import Base, TimestampMixin, Vector
+from app.core.db import Base, JSONB, TimestampMixin, Vector
 
 if TYPE_CHECKING:
     from app.models.section import Section
@@ -69,6 +69,23 @@ class Chunk(TimestampMixin, Base):
         default=1,
         server_default="1",
         comment="1 = embeddings built without task prefixes; 2 = nomic prefix inputs (U7)",
+    )
+
+    # ── Chunk type ────────────────────────────────────────────
+    kind: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="text",
+        server_default="'text'",
+        comment="'text' | 'table' | 'figure'; a table chunk is Markdown and is embedded/rendered as structured data",
+    )
+
+    # Figure region (kind='figure' only): {x0,y0,x1,y1} in page points. The
+    # caption lives in ``content``; no image is stored.
+    bbox: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Figure region {x0,y0,x1,y1} in PDF points; kind='figure' only",
     )
 
     # ── Relationships ─────────────────────────────────────────

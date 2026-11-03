@@ -3,20 +3,33 @@
 Books are shared global resources — library browsing does not require
 authentication. All service functions accept an explicit db session and
 return Pydantic models (not ORM instances) to enforce the API contract.
+
+Ingestion runs **in this process** in a background thread (``run_ingest``):
+the box has no separate Dramatiq worker, and the API container already runs
+Ollama. ``run_ingest`` is the portable unit of work — moving ingestion to a
+dedicated server later means calling that same function there and swapping
+``trigger_ingestion`` to enqueue/message it.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+import threading
 import uuid
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.models.book import Book, IngestionStatus
+from app.models.chunk import Chunk
+from app.models.section import Section
+
+# One ingestion at a time: the pipeline is CPU/Ollama heavy, and the figure
+# captioner is rate-limited account-wide.
+_INGEST_LOCK = threading.Lock()
 
 
 # ── Pydantic response schemas ──────────────────────────────────
@@ -28,6 +41,7 @@ class BookResponse(BaseModel):
     id: uuid.UUID
     title: str
     author: str
+    category: Optional[str] = None
     description: Optional[str] = None
     cover_image_url: Optional[str] = None
     storage_url: str
@@ -44,6 +58,20 @@ class BookListResponse(BaseModel):
 
     books: list[BookResponse]
     total: int
+
+
+class IngestProgressResponse(BaseModel):
+    """Live ingestion progress for the admin page (derived from row counts)."""
+
+    book_id: uuid.UUID
+    status: IngestionStatus
+    sections_total: Optional[int] = None
+    sections_done: int = 0
+    chunks: int = 0
+    figures: int = 0
+    tables: int = 0
+    word_count: Optional[int] = None
+    running: bool = False
 
 
 class BookSectionSummary(BaseModel):
@@ -151,11 +179,68 @@ async def get_books_by_status(
     return await list_books(db, status=status, limit=limit, offset=offset)
 
 
+async def _count_chunks(db: AsyncSession, book_id: uuid.UUID, kind: str) -> int:
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(Chunk)
+            .join(Section, Chunk.section_id == Section.id)
+            .where(Section.book_id == book_id, Chunk.kind == kind)
+        )
+    ).scalar_one()
+
+
+async def get_ingest_progress(
+    db: AsyncSession,
+    book_id: uuid.UUID,
+) -> Optional[IngestProgressResponse]:
+    """Live ingestion progress for a book, derived from row counts.
+
+    Counts (sections, chunks, figures, tables) are read live, so the values stay
+    accurate and survive the browser navigating away and back. ``figures``/
+    ``tables`` tell you what the pipeline actually produced.
+    """
+    book = await db.get(Book, book_id)
+    if book is None:
+        return None
+
+    sections_done = (
+        await db.execute(
+            select(func.count())
+            .select_from(Section)
+            .where(Section.book_id == book_id)
+        )
+    ).scalar_one()
+    chunks = (
+        await db.execute(
+            select(func.count())
+            .select_from(Chunk)
+            .join(Section, Chunk.section_id == Section.id)
+            .where(Section.book_id == book_id)
+        )
+    ).scalar_one()
+    figures = await _count_chunks(db, book_id, "figure")
+    tables = await _count_chunks(db, book_id, "table")
+
+    return IngestProgressResponse(
+        book_id=book_id,
+        status=book.ingestion_status,
+        sections_total=book.section_count,
+        sections_done=sections_done,
+        chunks=chunks,
+        figures=figures,
+        tables=tables,
+        word_count=book.word_count,
+        running=book.ingestion_status == IngestionStatus.PROCESSING,
+    )
+
+
 async def create_book(
     db: AsyncSession,
     *,
     title: str,
     author: str,
+    category: Optional[str] = None,
     storage_url: str,
     description: Optional[str] = None,
     cover_image_url: Optional[str] = None,
@@ -174,6 +259,7 @@ async def create_book(
     book = Book(
         title=title,
         author=author,
+        category=category,
         storage_url=storage_url,
         description=description,
         cover_image_url=cover_image_url,
@@ -185,25 +271,60 @@ async def create_book(
     return BookResponse.model_validate(book)
 
 
+async def delete_book(db: AsyncSession, book_id: uuid.UUID) -> bool:
+    """Delete a book and all of its data. Returns False when it does not exist.
+
+    ``section``/``chunk`` cascade from ``book`` (FK ``ON DELETE CASCADE``).
+    ``coverage_event``, ``note_session`` (+ blocks/links) and ``qa_message``
+    reference ``book_id`` with no FK (shared-resource invariant), so they are
+    removed explicitly here to avoid orphans.
+    """
+    from app.models.coverage_event import CoverageEvent
+    from app.models.note_block import NoteBlock
+    from app.models.note_link import NoteLink
+    from app.models.note_session import NoteSession
+    from app.models.qa_message import QAMessage
+
+    book = await db.get(Book, book_id)
+    if book is None:
+        return False
+
+    note_ids = select(NoteSession.id).where(NoteSession.book_id == book_id)
+    block_ids = select(NoteBlock.id).where(NoteBlock.note_id.in_(note_ids))
+    await db.execute(delete(NoteLink).where(NoteLink.block_id.in_(block_ids)))
+    await db.execute(delete(NoteBlock).where(NoteBlock.note_id.in_(note_ids)))
+    await db.execute(delete(NoteSession).where(NoteSession.book_id == book_id))
+    await db.execute(delete(CoverageEvent).where(CoverageEvent.book_id == book_id))
+    await db.execute(delete(QAMessage).where(QAMessage.book_id == book_id))
+
+    # Sections (and their chunks) delete via ON DELETE CASCADE.
+    await db.delete(book)
+    await db.commit()
+    return True
+
+
 async def trigger_ingestion(
     db: AsyncSession,
     book_id: uuid.UUID,
+    *,
+    force: bool = False,
 ) -> str:
-    """Trigger background ingestion for a book.
+    """Start ingestion for a book in a background thread.
 
-    Validates the book exists and is not already ingested or currently
-    being ingested. Enqueues a Dramatiq ``ingest_book`` job and returns
-    the job ID.
+    ``force=True`` re-runs an already-COMPLETED book (used to backfill tables /
+    figures onto a book ingested by an older pipeline). It does this by setting
+    the status to PROCESSING before the job starts, so ``run_ingest`` does not
+    skip it; the pipeline's own checkpointing keeps the re-run cheap where
+    sections are already complete.
 
-    Args:
-        db: Async SQLAlchemy session.
-        book_id: UUID of the book to ingest.
+    Only one ingest runs at a time (module lock).
 
     Returns:
-        Dramatiq job message ID as a string.
+        A job id string (``inline-<book_id>``).
 
     Raises:
-        ValueError: If the book is not found or already ingested.
+        ValueError: If the book is not found, already ingested (without
+            ``force``), or an ingest is already running.
     """
     from app.models.book import Book  # noqa: F811
 
@@ -211,19 +332,43 @@ async def trigger_ingestion(
     if book is None:
         raise ValueError(f"Book {book_id} not found")
 
-    if book.ingestion_status == IngestionStatus.COMPLETED:
-        raise ValueError(f"Book {book_id} is already ingested")
+    if book.ingestion_status == IngestionStatus.COMPLETED and not force:
+        raise ValueError(
+            f"Book {book_id} is already ingested — pass force to re-run it"
+        )
 
-    if book.ingestion_status == IngestionStatus.PROCESSING:
-        raise ValueError(f"Book {book_id} is currently being ingested")
+    if not _INGEST_LOCK.acquire(blocking=False):
+        raise ValueError("An ingestion is already running — try again when it finishes")
 
-    # Enqueue the ingestion job
-    # Lazy import avoids pulling in Dramatiq broker at module load time
-    from app.workers.ingest import ingest_book  # noqa: C0301
-    job = ingest_book.send(str(book_id))
+    # The portable unit of work. Swap this for an enqueue when ingestion moves
+    # to a dedicated server; the pipeline itself does not change.
+    from app.workers.ingest import run_ingest
 
-    # Mark as processing
+    def _run() -> None:
+        try:
+            run_ingest(str(book_id))
+        finally:
+            _INGEST_LOCK.release()
+
+    # Mark PROCESSING up front so the UI shows progress immediately AND so
+    # run_ingest does not skip a COMPLETED book on a forced re-run.
     book.ingestion_status = IngestionStatus.PROCESSING
     await db.commit()
+    threading.Thread(target=_run, name=f"ingest-{book_id}", daemon=True).start()
 
-    return job.message_id
+    return f"inline-{book_id}"
+
+
+async def update_book_category(
+    db: AsyncSession,
+    book_id: uuid.UUID,
+    category: Optional[str],
+) -> Optional[BookResponse]:
+    """Set (or clear) a book's category. Returns None if the book is missing."""
+    book = await db.get(Book, book_id)
+    if book is None:
+        return None
+    book.category = (category or "").strip() or None
+    await db.commit()
+    await db.refresh(book)
+    return BookResponse.model_validate(book)

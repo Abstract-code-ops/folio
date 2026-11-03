@@ -57,6 +57,22 @@ def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
     )
 
 
+def _forbidden(detail: str = "Admin access required") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+    )
+
+
+def _admin_emails() -> set[str]:
+    """Parsed, lowercased admin allow-list from settings."""
+    return {
+        email.strip().lower()
+        for email in (settings.admin_emails or "").split(",")
+        if email.strip()
+    }
+
+
 def _anonymous_or_reject() -> uuid.UUID:
     """Anonymous identity when auth is optional; 401 when it is required."""
     if settings.auth_required:
@@ -142,4 +158,84 @@ async def get_current_user(
         return _anonymous_or_reject()
 
     _TOKEN_CACHE[token] = (user_id, _expiry_epoch(expires_at), now)
+    return user_id
+
+
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_read_session),
+) -> uuid.UUID | None:
+    """Resolve the user id from a token if present and valid; else None.
+
+    Unlike :func:`get_current_user`, this never raises 401 — it is for endpoints
+    that must work for anonymous visitors (guest Q&A). When a valid session
+    token is supplied it behaves exactly like ``get_current_user``; otherwise it
+    returns ``None`` so the caller can take the guest (no-persistence) path.
+    """
+    if credentials is None:
+        return None
+
+    token = credentials.credentials
+    now = time.monotonic()
+
+    cached = _TOKEN_CACHE.get(token)
+    if cached is not None:
+        user_id, expiry_epoch, cached_at = cached
+        if now - cached_at < _TOKEN_CACHE_TTL and (
+            expiry_epoch == 0 or expiry_epoch > time.time()
+        ):
+            return user_id
+        _TOKEN_CACHE.pop(token, None)
+
+    table = settings.better_auth_session_table
+    token_column = settings.better_auth_session_token_column
+    query = text(
+        f"SELECT user_id, expires_at FROM {table} WHERE {token_column} = :token"
+    )
+    result = await db.execute(query, {"token": token})
+    row = result.one_or_none()
+    if row is None:
+        return None
+
+    user_id_raw, expires_at = row
+    if _is_expired(expires_at):
+        return None
+
+    try:
+        user_id = uuid.UUID(str(user_id_raw))
+    except (ValueError, AttributeError):
+        return None
+
+    _TOKEN_CACHE[token] = (user_id, _expiry_epoch(expires_at), now)
+    return user_id
+
+
+async def require_admin(
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_read_session),
+) -> uuid.UUID:
+    """Require the current user to be an allow-listed admin; else 403.
+
+    Admin identity is the account's email from Better Auth's ``user`` table,
+    matched against ``settings.admin_emails``. Fail-closed: an empty allow-list,
+    an anonymous user, or an unlisted email all get 403. The table/column names
+    come from trusted config and ``user`` is quoted because it is reserved in
+    Postgres; the user id is a bound parameter.
+    """
+    allowed = _admin_emails()
+    if not allowed:
+        raise _forbidden()
+
+    table = settings.better_auth_user_table
+    id_col = settings.better_auth_user_id_column
+    email_col = settings.better_auth_user_email_column
+
+    result = await db.execute(
+        text(f'SELECT {email_col} FROM "{table}" WHERE {id_col} = :uid'),
+        {"uid": str(user_id)},
+    )
+    row = result.one_or_none()
+    email = str(row[0]).strip().lower() if row and row[0] else ""
+    if not email or email not in allowed:
+        raise _forbidden()
     return user_id

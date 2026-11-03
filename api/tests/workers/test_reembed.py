@@ -15,6 +15,7 @@ from app.models.chunk import Chunk
 from app.models.section import Section
 from app.pipeline import metadata as metadata_module
 from app.pipeline import parser as parser_module
+from app.pipeline.embed_inputs import EMBED_VERSION
 from app.workers.reembed import reembed_book
 
 
@@ -103,10 +104,11 @@ async def test_reembed_updates_sections_and_chunks(session, forbid_heavy_paths) 
 
     assert stats == {"sections": 2, "chunks": 1}
     assert all(
-        section.embed_version == 2 for section in session.scalars(select(Section))
+        section.embed_version == EMBED_VERSION
+        for section in session.scalars(select(Section))
     )
     assert all(
-        chunk.embed_version == 2 for chunk in session.scalars(select(Chunk))
+        chunk.embed_version == EMBED_VERSION for chunk in session.scalars(select(Chunk))
     )
 
 

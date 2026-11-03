@@ -67,7 +67,7 @@ class TextBlock(BaseModel):
     page: int  # 1-based page number
     bbox: tuple[float, float, float, float]  # x0, y0, x1, y1
     text: str
-    block_type: str = "text"  # "text" | "image"
+    block_type: str = "text"  # "text" | "image" | "table"
     from_ocr: bool = False
 
 
@@ -206,14 +206,102 @@ def _ocr_page_blocks(page) -> list[TextBlock]:
     ]
 
 
-def _extract_page_blocks(page) -> list[TextBlock]:
-    """Extract one page as ordered text and image blocks.
+def _rows_to_markdown(rows: list[list]) -> str:
+    """Render a table (rows of cell strings) as GitHub-flavored Markdown.
 
-    Falls back to OCR when the page yields almost no text, which covers
-    image-only and scanned pages.
+    Dependency-free (no tabulate/pandas). The first row is treated as the
+    header. Newlines are flattened and pipes escaped so the result is a single
+    clean table block.
+    """
+
+    def cell(value: object) -> str:
+        text = "" if value is None else str(value)
+        return text.replace("\n", " ").replace("|", "\\|").strip()
+
+    cleaned = [[cell(value) for value in row] for row in rows]
+    cleaned = [row for row in cleaned if any(value for value in row)]
+    if not cleaned:
+        return ""
+
+    width = max(len(row) for row in cleaned)
+    header = (cleaned[0] + [""] * width)[:width]
+    body = [(row + [""] * width)[:width] for row in cleaned[1:]]
+
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    return "\n".join(lines)
+
+
+def _extract_tables(page) -> list[tuple[tuple[float, float, float, float], str]]:
+    """Detect tables on a page and return ``[(bbox, markdown)]``.
+
+    Best-effort and dependency-free: if ``find_tables`` is unavailable or a
+    table cannot be extracted, that table is skipped and the page falls back to
+    the previous text-only behaviour. Never raises.
+    """
+    find = getattr(page, "find_tables", None)
+    if find is None:
+        return []
+    try:
+        found = find()
+        tables = getattr(found, "tables", found) or []
+    except Exception as exc:  # noqa: BLE001 - table detection must not break a parse
+        logger.debug("find_tables failed on page %d: %s", page.number + 1, exc)
+        return []
+
+    out: list[tuple[tuple[float, float, float, float], str]] = []
+    for table in tables:
+        try:
+            markdown = _rows_to_markdown(table.extract())
+            bbox = tuple(float(v) for v in table.bbox)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("table extraction failed on page %d: %s", page.number + 1, exc)
+            continue
+        if markdown:
+            out.append((bbox, markdown))
+    return out
+
+
+def _bbox_overlap_ratio(
+    inner: tuple[float, float, float, float],
+    outer: tuple[float, float, float, float],
+) -> float:
+    """Fraction of ``inner``'s area that lies inside ``outer``."""
+    ax0, ay0, ax1, ay1 = inner
+    area = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    if area <= 0:
+        return 0.0
+    ix0, iy0 = max(ax0, outer[0]), max(ay0, outer[1])
+    ix1, iy1 = min(ax1, outer[2]), min(ay1, outer[3])
+    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    return inter / area
+
+
+def _inside_any_table(
+    bbox: tuple[float, float, float, float],
+    tables: list[tuple[tuple[float, float, float, float], str]],
+    *,
+    threshold: float = 0.5,
+) -> bool:
+    """True when most of ``bbox`` lies within a detected table."""
+    return any(_bbox_overlap_ratio(bbox, tbbox) >= threshold for tbbox, _ in tables)
+
+
+def _extract_page_blocks(page) -> list[TextBlock]:
+    """Extract one page as ordered text, image and table blocks.
+
+    Tables are detected first; text blocks that fall inside a table are dropped
+    so their cell text is not duplicated as prose, and each table is emitted
+    once as a Markdown block. Falls back to OCR when the page yields almost no
+    text, which covers image-only and scanned pages.
     """
     page_number = page.number + 1
     blocks: list[TextBlock] = []
+
+    tables = _extract_tables(page)
 
     for item in page.get_text("blocks"):
         x0, y0, x1, y1, text, _number, block_type = item[:7]
@@ -225,12 +313,25 @@ def _extract_page_blocks(page) -> list[TextBlock]:
                 TextBlock(page=page_number, bbox=bbox, text="", block_type="image")
             )
             continue
+        if tables and _inside_any_table(bbox, tables):
+            continue  # captured by the table block below
         cleaned = _clean_block_text(text)
         if not cleaned:
             continue
         blocks.append(TextBlock(page=page_number, bbox=bbox, text=cleaned))
 
-    text_chars = sum(len(block.text) for block in blocks if block.block_type == "text")
+    for tbbox, markdown in tables:
+        blocks.append(
+            TextBlock(page=page_number, bbox=tbbox, text=markdown, block_type="table")
+        )
+
+    # Tables sort back into reading order with the surrounding text.
+    if tables:
+        blocks.sort(key=lambda block: (block.bbox[1], block.bbox[0]))
+
+    text_chars = sum(
+        len(block.text) for block in blocks if block.block_type in ("text", "table")
+    )
     if text_chars > _MIN_TEXT_CHARS:
         return blocks
 

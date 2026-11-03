@@ -19,7 +19,9 @@ Every toggle defaults to the behaviour that was measured on the eval.
 from __future__ import annotations
 
 import os
+import time
 import uuid
+from collections import OrderedDict
 from typing import Optional
 
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -31,8 +33,6 @@ from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.section import Section
 from app.pipeline.embed_inputs import EMBED_VERSION, query_embed_text
-
-# Query embedding via LlamaIndex against local Ollama nomic-embed-text
 # (768-dim, matching the pgvector column).
 _embedder = OllamaEmbedding(
     model_name="nomic-embed-text",
@@ -41,6 +41,23 @@ _embedder = OllamaEmbedding(
 
 # A retrieved chunk paired with its cosine distance. Lower distance = closer.
 Hit = tuple[Chunk, float]
+
+# Small LRU of query embeddings. Repeated or refined queries reuse the vector
+# instead of round-tripping to Ollama (CPU-bound, ~0.1-0.5s per call).
+_EMBED_CACHE: "OrderedDict[str, list[float]]" = OrderedDict()
+_EMBED_CACHE_MAX = 256
+
+
+async def _embed_query(text: str) -> list[float]:
+    cached = _EMBED_CACHE.get(text)
+    if cached is not None:
+        _EMBED_CACHE.move_to_end(text)
+        return cached
+    vector = await _embedder.aget_text_embedding(text)
+    _EMBED_CACHE[text] = vector
+    if len(_EMBED_CACHE) > _EMBED_CACHE_MAX:
+        _EMBED_CACHE.popitem(last=False)
+    return vector
 
 
 def _candidate_limit(k: int) -> int:
@@ -91,18 +108,25 @@ async def retrieve_top_chunks(
 ) -> list[Hit]:
     """Return up to ``k`` chunks with their cosine distance, closest first."""
     k = k or settings.retrieval_top_k
-    query_embedding = await _embedder.aget_text_embedding(
+    query_embedding = await _embed_query(
         query_embed_text(question, prefixed=settings.embed_prefixes_enabled)
     )
 
-    child = aliased(Section)
-    has_children = (
-        select(child.id).where(child.parent_section_id == Section.id).exists()
-    )
     distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
+    columns = [Chunk, distance]
+
+    # The connective-stub filter needs a per-row "has children" check, which is a
+    # correlated EXISTS subquery. Only compute it when the filter is on (off by
+    # default), so the common query stays a plain vector scan.
+    if settings.retrieval_exclude_connective:
+        child = aliased(Section)
+        has_children = (
+            select(child.id).where(child.parent_section_id == Section.id).exists()
+        )
+        columns.append(has_children.label("has_children"))
 
     stmt = (
-        select(Chunk, distance, has_children.label("has_children"))
+        select(*columns)
         .join(Section, Chunk.section_id == Section.id)
         .where(Section.book_id == book_id, Chunk.embedding.isnot(None))
         .options(joinedload(Chunk.section))
@@ -119,12 +143,14 @@ async def retrieve_top_chunks(
 
     hits: list[Hit] = []
     seen_ids: set[uuid.UUID] = set()
-    for chunk, chunk_distance, children in rows:
+    for row in rows:
+        chunk = row[0]
+        chunk_distance = row[1]
         if chunk.id in seen_ids:
             continue
         seen_ids.add(chunk.id)
         if settings.retrieval_exclude_connective and _is_connective_stub(
-            chunk.section, bool(children)
+            chunk.section, bool(row[2])
         ):
             continue
         hits.append((chunk, float(chunk_distance)))
@@ -135,13 +161,22 @@ async def retrieve_top_chunks(
     return hits[:k]
 
 
+_SECTION_INDEX_CACHE: dict[uuid.UUID, tuple[float, dict, list]] = {}
+_SECTION_INDEX_TTL = 60.0
+
+
 async def load_section_index(db: AsyncSession, book_id: uuid.UUID):
     """Section id -> (heading, parent_id), plus the same rows in document order.
 
-    One query for the whole book. Passage headers want a heading path, and note
-    links want the same thing as their anchor; neither can be derived from a
-    single chunk without walking ancestors.
+    One query for the whole book, cached for a short window: expand_context asks
+    for it on every search (and the agent can search more than once), so without
+    the cache a turn reloads the whole book several times. Headings only change
+    on re-ingest, so a 60s TTL is safe.
     """
+    cached = _SECTION_INDEX_CACHE.get(book_id)
+    if cached is not None and time.monotonic() - cached[0] < _SECTION_INDEX_TTL:
+        return cached[1], cached[2]
+
     rows = (
         await db.execute(
             select(
@@ -154,6 +189,9 @@ async def load_section_index(db: AsyncSession, book_id: uuid.UUID):
         )
     ).all()
     index = {row[0]: (row[1], row[2]) for row in rows}
+    if len(_SECTION_INDEX_CACHE) > 200:
+        _SECTION_INDEX_CACHE.clear()
+    _SECTION_INDEX_CACHE[book_id] = (time.monotonic(), index, rows)
     return index, rows
 
 

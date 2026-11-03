@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Install system deps + Ollama
 RUN apt-get update && apt-get install -y \
-    libpq-dev gcc curl zstd tesseract-ocr \
+    libpq-dev gcc curl zstd tesseract-ocr ghostscript \
     && curl -fsSL https://ollama.com/install.sh | sh \
     && rm -rf /usr/local/lib/ollama/cuda_v12 \
               /usr/local/lib/ollama/cuda_v13 \

@@ -26,9 +26,10 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_optional_user
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
+from app.core.ratelimit import rate_limit, rate_limit_by_ip
 from app.models.book import Book
 from app.models.coverage_event import CoverageEvent, EventType
 from app.models.qa_message import QAMessage
@@ -100,7 +101,7 @@ class QaTurnListResponse(BaseModel):
 @router.post("/summarize")
 async def summarize(
     body: SummarizeRequest,
-    user_id: uuid.UUID = Depends(get_current_user),
+    _rl: None = Depends(rate_limit_by_ip("qa_summarize", 20, 60)),
 ) -> dict[str, str]:
     """Summarise a conversation so later turns can carry a rolling summary."""
     if not body.messages:
@@ -147,7 +148,8 @@ async def list_turns(
 async def ask_question(
     book_id: uuid.UUID,
     body: AskQuestionRequest,
-    user_id: uuid.UUID = Depends(get_current_user),
+    _rl: None = Depends(rate_limit_by_ip("qa_ask", 40, 60)),
+    user_id: uuid.UUID | None = Depends(get_optional_user),
 ) -> StreamingResponse:
     """Ask a question about the book, stream a grounded answer.
 
@@ -202,7 +204,7 @@ def _matched_section_ids(passages: list[ContextPassage]) -> set[uuid.UUID]:
 
 
 async def _qa_stream(
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     book_id: uuid.UUID,
     question: str,
     summary: str | None = None,
@@ -229,10 +231,19 @@ async def _qa_stream(
                     }).encode() + b"\n"
                     return
 
+                # Release the pooled connection before the (long) stream; the
+                # search below opens its own short-lived sessions.
+                await db.commit()
+
                 async def search(query: str) -> list[ContextPassage]:
-                    """Retrieval, injected into the agent so it stays layer-pure."""
-                    hits = await retrieve_top_chunks(db, book_id, query)
-                    return await expand_context(db, hits)
+                    """Retrieval, injected into the agent so it stays layer-pure.
+
+                    Uses its own session so the agent can run several searches
+                    concurrently in one round.
+                    """
+                    async with AsyncSessionLocal() as search_db:
+                        hits = await retrieve_top_chunks(search_db, book_id, query)
+                        return await expand_context(search_db, hits)
 
                 agent = BookAgent(
                     book_title=book.title,
@@ -271,6 +282,8 @@ async def _qa_stream(
                 context = build_context(
                     [(passage, passage.distance or 0.0) for passage in passages]
                 )
+                # Release the pooled connection before the (long) stream.
+                await db.commit()
                 async for event_bytes in answer_question_stream(
                     question=question,
                     context=context,
@@ -295,49 +308,49 @@ async def _qa_stream(
             for citation in citations:
                 yield json.dumps(citation).encode() + b"\n"
 
-            # Persist the exchange. section_id stays required by the model, so
-            # fall back to the first matched section when there is one.
-            matched_ids = _matched_section_ids(passages)
-            diagnostics = build_turn_diagnostics(
-                mode=qa_mode,
-                queries=queries,
-                passages=passages,
-                citation_count=len(citations),
-                answer_chars=len(full_answer),
-                reasoning=reasoning_text,
-                ttft_ms=ttft_ms,
-                total_ms=total_ms,
-                error=stream_error,
-            )
-            qa_message = QAMessage(
-                user_id=user_id,
-                book_id=book_id,
-                section_id=next(iter(matched_ids), None),
-                question=question,
-                answer=full_answer,
-                sources=citations if citations else None,
-                diagnostics=diagnostics,
-            )
-            db.add(qa_message)
-            await db.flush()
-
-            for sid in matched_ids:
-                db.add(
-                    CoverageEvent(
-                        user_id=user_id,
-                        book_id=book_id,
-                        section_id=sid,
-                        event_type=EventType.QA_ASKED,
-                        event_metadata={"qa_message_id": str(qa_message.id)},
-                    )
+            # Anonymous guests get a trial answer with NO persistence — no
+            # qa_message, no coverage event; their history is client-side only.
+            if user_id is None:
+                yield json.dumps({"type": "done", "guest": True}).encode() + b"\n"
+            else:
+                matched_ids = _matched_section_ids(passages)
+                diagnostics = build_turn_diagnostics(
+                    mode=qa_mode,
+                    queries=queries,
+                    passages=passages,
+                    citation_count=len(citations),
+                    answer_chars=len(full_answer),
+                    reasoning=reasoning_text,
+                    ttft_ms=ttft_ms,
+                    total_ms=total_ms,
+                    error=stream_error,
                 )
-
-            await db.commit()
-
-            yield json.dumps({
-                "type": "done",
-                "qa_message_id": str(qa_message.id),
-            }).encode() + b"\n"
+                qa_message = QAMessage(
+                    user_id=user_id,
+                    book_id=book_id,
+                    section_id=next(iter(matched_ids), None),
+                    question=question,
+                    answer=full_answer,
+                    sources=citations if citations else None,
+                    diagnostics=diagnostics,
+                )
+                db.add(qa_message)
+                await db.flush()
+                for sid in matched_ids:
+                    db.add(
+                        CoverageEvent(
+                            user_id=user_id,
+                            book_id=book_id,
+                            section_id=sid,
+                            event_type=EventType.QA_ASKED,
+                            event_metadata={"qa_message_id": str(qa_message.id)},
+                        )
+                    )
+                await db.commit()
+                yield json.dumps({
+                    "type": "done",
+                    "qa_message_id": str(qa_message.id),
+                }).encode() + b"\n"
 
         except Exception as e:
             await db.rollback()

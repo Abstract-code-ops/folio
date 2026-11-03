@@ -34,6 +34,8 @@ def _passage(
     page_end=None,
     chunk_index=0,
     section=None,
+    kind="text",
+    bbox=None,
 ) -> ContextPassage:
     return ContextPassage(
         section=section or _Section(),
@@ -42,6 +44,8 @@ def _passage(
         chunk_index=chunk_index,
         page_start=page_start,
         page_end=page_end,
+        kind=kind,
+        bbox=bbox,
     )
 
 
@@ -174,7 +178,27 @@ def test_citation_has_the_expected_keys() -> None:
         "page_start",
         "page_end",
         "excerpt",
+        "kind",
+        "bbox",
     }
+
+
+def test_a_table_passage_is_tagged_in_the_citation() -> None:
+    passage = _passage("| a | b |", kind="table")
+
+    citation = build_used_citations("[1]", [passage])[0]
+
+    assert citation["kind"] == "table"
+
+
+def test_a_figure_citation_carries_kind_and_bbox() -> None:
+    bbox = {"x0": 1.0, "y0": 2.0, "x1": 3.0, "y1": 4.0}
+    passage = _passage("A tree diagram.", kind="figure", bbox=bbox)
+
+    citation = build_used_citations("[1]", [passage])[0]
+
+    assert citation["kind"] == "figure"
+    assert citation["bbox"] == bbox
 
 
 def test_excerpt_is_truncated() -> None:

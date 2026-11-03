@@ -29,9 +29,10 @@ QUERY_PREFIX = "search_query:"
 QUERY_PREFIX = "search_query:"
 
 # 1 = embeddings built without task prefixes (pre-U7). 2 = nomic prefix inputs.
-# Lives here so ingest, re-embed and retrieval cannot disagree, and so the
-# re-embed module does not have to import the ingest module.
-EMBED_VERSION = 2
+# 3 = same inputs, but chunking now emits typed (text/table) chunks, so a book
+# ingested at <3 must be re-chunked to pick up table Markdown. Lives here so
+# ingest, re-embed and retrieval cannot disagree.
+EMBED_VERSION = 3
 
 # Ancestor headings are joined with this separator to form a breadcrumb.
 BREADCRUMB_SEPARATOR = " > "
@@ -59,13 +60,18 @@ def query_embed_text(question: str, *, prefixed: bool) -> str:
     return f"{QUERY_PREFIX} {text}"
 
 
-def chunk_embed_text(breadcrumb: str, content: str) -> str:
+def chunk_embed_text(breadcrumb: str, content: str, *, kind: str = "text") -> str:
     """Input for a chunk: ``search_document: {breadcrumb}\\n{content}``.
 
-    The stored ``content`` stays clean -- the prefix and breadcrumb exist only
-    in the string handed to the embedder, never in what is saved or shown.
+    A ``kind="table"`` chunk is prefixed with ``Table:`` so the embedding carries
+    the "this is structured data" signal, matching how the Q&A context renders
+    it. The stored ``content`` stays clean -- the prefix and breadcrumb exist
+    only in the string handed to the embedder, never in what is saved or shown.
     """
     body = f"{breadcrumb}\n{content}" if breadcrumb else content
+    marker = {"table": "Table", "figure": "Figure"}.get(kind)
+    if marker:
+        body = f"{marker}:\n{body}" if body else marker
     return f"{DOCUMENT_PREFIX} {body}"
 
 

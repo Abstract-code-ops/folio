@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Send, MessageSquare, ExternalLink, Trash2, Plus, X, RotateCcw, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
-import { syncBook } from "@/lib/sync";
+import { pullLatest } from "@/lib/sync";
+import { GUEST_QA_LIMIT, isAuthed } from "@/lib/guest";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -12,7 +13,7 @@ import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
-import { Loader } from "@/components/ui/loader";
+import { ThinkingAnimation } from "@/components/ui/thinking-animation";
 import type { QaEvent } from "@/types/chat";
 import {
   useChatStore,
@@ -55,7 +56,7 @@ function ThinkingIndicator() {
   }, []);
   return (
     <div className="flex items-center gap-2 rounded-lg rounded-bl-sm bg-bg-elevated px-3 py-2 text-body-sm text-text-muted">
-      <Loader variant="dots" />
+      <ThinkingAnimation />
       <span key={index} className="animate-pulse">
         {THINKING_LABELS[index]}
       </span>
@@ -196,6 +197,18 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
     const sessionId = activeId ?? store.createSession(bookId);
     const chat = store.getSession(sessionId);
     if (!chat) return;
+
+    // Guest trial: unauthenticated visitors get GUEST_QA_LIMIT questions, none
+    // persisted server-side. At the cap, prompt sign-in.
+    if (!isAuthed()) {
+      const asked = store
+        .listSessions(bookId)
+        .reduce((n, s) => n + s.messages.filter((m) => m.role === "user").length, 0);
+      if (asked >= GUEST_QA_LIMIT) {
+        setError(`You've used your ${GUEST_QA_LIMIT} free questions — sign in to keep going.`);
+        return;
+      }
+    }
 
     // Only the messages the summary does not already cover go to the backend.
     const covered = chat.summarizedCount ?? 0;
@@ -354,7 +367,7 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
     return () => clearTimeout(timer);
   }, [confirmClear]);
 
-  // Cross-device sync (chat + notes), rate-limited with a short cooldown.
+  // Get latest from the server (read-only pull), rate-limited with a short cooldown.
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
@@ -365,7 +378,7 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
     if (syncing || cooldown > 0) return;
     setSyncing(true);
     try {
-      await syncBook(bookId);
+      await pullLatest(bookId);
     } catch {
       // best-effort; the button re-enables after the cooldown
     } finally {
@@ -458,7 +471,7 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
         <button
           onClick={doSync}
           disabled={syncing || cooldown > 0}
-          aria-label="Sync chat and notes from the server"
+          aria-label="Get latest chat and notes from the server"
           title="Pull the latest chat + notes from the server (across devices)"
           className="ml-auto flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-body-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary disabled:opacity-50 sm:min-h-0"
         >
@@ -466,7 +479,7 @@ export function ChatPanel({ bookId, suggestions = [], onCitationClick, className
             className={cn("h-3.5 w-3.5", syncing && "animate-spin")}
             strokeWidth={1.5}
           />
-          {syncing ? "Syncing…" : cooldown > 0 ? `${cooldown}s` : "Sync"}
+          {syncing ? "Syncing…" : cooldown > 0 ? `${cooldown}s` : "Get latest"}
         </button>
       </div>
 

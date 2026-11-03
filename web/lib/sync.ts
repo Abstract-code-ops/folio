@@ -1,7 +1,7 @@
 import { apiClient } from "./api-client";
 import { useChatStore } from "./chat-store";
 import { useNotesStore, type LocalNote } from "./notes-store";
-import { markNoteSynced, flushNoteSyncNow } from "./note-sync";
+import { markNoteSynced } from "./note-sync";
 import type { NoteDetail } from "@/types/notes";
 
 /**
@@ -57,6 +57,13 @@ export async function importNotesForBook(
   for (const session of data.sessions) {
     try {
       const detail = await apiClient.getNote(session.id);
+      const serverUpdatedAt = new Date(
+        detail.updated_at ?? detail.created_at,
+      ).getTime();
+      const local = store.getNote(detail.id);
+      // Safe pull: never downgrade a newer local note to an older server copy.
+      // A newer local note is an unsaved edit the write-behind will push; keep it.
+      if (local && local.updatedAt > serverUpdatedAt) continue;
       store.saveNote(toLocalNote(detail));
       markNoteSynced(detail.id); // already on the server; don't re-push it
     } catch {
@@ -71,17 +78,20 @@ export async function importChatForBook(
   options: { force?: boolean } = {},
 ): Promise<void> {
   const store = useChatStore.getState();
-  if (options.force) {
-    // A manual sync reconciles chat from the server: drop the local view and
-    // rebuild it from the recorded turns (which include other devices').
-    for (const session of store.listSessions(bookId)) store.deleteSession(session.id);
-  } else if (store.listSessions(bookId).length > 0) {
+  if (!options.force && store.listSessions(bookId).length > 0) {
     return; // cache hit
   }
 
+  // Fetch first: a failed or empty pull must never wipe the device's chat.
   const data = await apiClient.listQaTurns({ bookId, limit: 200 });
   const turns = [...data.turns].reverse(); // oldest first
   if (turns.length === 0) return;
+
+  // Force pull ("get latest"): replace the local view with the server's thread,
+  // which is the append-only record of every device's turns.
+  if (options.force) {
+    for (const session of store.listSessions(bookId)) store.deleteSession(session.id);
+  }
 
   // The server stores a flat Q&A log, not sessions; rebuild it as one chat.
   const sessionId = store.createSession(bookId);
@@ -111,12 +121,17 @@ export async function syncUserData(bookId: string): Promise<void> {
 }
 
 /**
- * Manual cross-device sync: push this device's pending note edits to the server,
- * then pull the server's current notes + chat so changes made on another device
- * (phone vs laptop) show up here. Rate limiting is handled by the caller.
+ * Manual "get latest" pull: read the server's current notes + chat into this
+ * device so changes made on another device (phone vs laptop) show up here.
+ *
+ * Strictly one-way (server -> this device). It never writes local state back, so
+ * an accidental sync on the "wrong" device cannot overwrite the cloud copy the
+ * other device is working from (the old push-then-pull bug). Local edits still
+ * save through the normal write-behind (Done button, pagehide, 60 s backstop).
+ * The pull is also downgrade-safe: a local note newer than the server's copy is
+ * kept, never replaced. Rate limiting is handled by the caller.
  */
-export async function syncBook(bookId: string): Promise<void> {
-  await flushNoteSyncNow(); // push local edits first so they aren't overwritten
+export async function pullLatest(bookId: string): Promise<void> {
   await Promise.allSettled([
     importNotesForBook(bookId, { force: true }),
     importChatForBook(bookId, { force: true }),

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { BookLoader } from "@/components/ui/book-loader";
+
 /**
  * Full-screen loading state with a spinner and rotating messages. Used when
  * opening a book so the wait communicates progress ("Loading book…",
@@ -20,10 +22,7 @@ export function LoadingScreen({ messages }: { messages: string[] }) {
 
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-6 bg-bg-base">
-      <div
-        className="h-10 w-10 animate-spin rounded-full border-2 border-border border-t-accent"
-        aria-hidden
-      />
+      <BookLoader />
       <p
         key={index}
         className="text-body text-text-muted transition-opacity duration-300"

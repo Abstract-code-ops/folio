@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
+import { isAuthed } from "@/lib/guest";
+import { notifyUnauthorized } from "@/lib/notify";
 import { Loader } from "@/components/ui/loader";
 import { makeLocalNote, useNotesStore, type LocalBlock } from "@/lib/notes-store";
 import { startTopicNoteGeneration } from "@/lib/note-generation";
@@ -109,6 +111,11 @@ export function NewNoteMenu({
   }, [busy, close, onCreated]);
 
   const generateFromTopic = useCallback(() => {
+    if (!isAuthed()) {
+      notifyUnauthorized();
+      close();
+      return;
+    }
     const value = topic.trim();
     if (!value) return;
     // Runs in the background: a placeholder note appears immediately and
@@ -119,6 +126,11 @@ export function NewNoteMenu({
   }, [bookId, topic, close]);
 
   const generateChapterRange = useCallback(() => {
+    if (!isAuthed()) {
+      notifyUnauthorized();
+      close();
+      return;
+    }
     if (chapterEnd < chapterStart) return;
     // Runs in the background: a placeholder note appears in the list and
     // finishes on its own even if the student leaves.

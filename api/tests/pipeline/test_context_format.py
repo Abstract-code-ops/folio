@@ -195,3 +195,23 @@ def test_content_is_preserved_verbatim() -> None:
     context = _ctx(_Passage(content=body, role="match"))
 
     assert body in context
+
+
+def test_a_table_passage_is_tagged_with_kind() -> None:
+    passage = _Passage(content="| a | b |\n| --- | --- |", role="match")
+    passage.kind = "table"
+
+    context = _ctx(passage)
+
+    assert "kind=table" in context
+    assert "| a | b |" in context
+
+
+def test_a_figure_passage_is_tagged_with_kind() -> None:
+    passage = _Passage(content="A binary tree diagram.", role="match")
+    passage.kind = "figure"
+
+    context = _ctx(passage)
+
+    assert "kind=figure" in context
+    assert "A binary tree diagram." in context

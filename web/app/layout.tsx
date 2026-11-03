@@ -3,6 +3,8 @@ import "./globals.css";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DbCallBadge } from "@/components/debug/db-call-badge";
 import { AuthBridge } from "@/components/auth/auth-bridge";
+import { PostHogProvider } from "@/components/analytics/PostHogProvider";
+import { Toaster } from "sonner";
 import { caveat } from "@/lib/fonts";
 
 export const metadata: Metadata = {
@@ -32,9 +34,16 @@ export default function RootLayout({
           }}
         />
         <AuthBridge />
-        {children}
+        <PostHogProvider>{children}</PostHogProvider>
         <ThemeToggle />
         <DbCallBadge />
+        <Toaster
+          position="bottom-right"
+          theme="system"
+          richColors
+          closeButton
+          toastOptions={{ className: "font-body" }}
+        />
       </body>
     </html>
   );

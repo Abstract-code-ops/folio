@@ -55,6 +55,24 @@ def test_the_prefix_constant_matches_what_the_strings_use() -> None:
     assert chunk_embed_text("H", "body").startswith(DOCUMENT_PREFIX + " ")
 
 
+def test_table_chunk_input_is_prefixed_with_a_table_marker() -> None:
+    result = chunk_embed_text("Part I > Tables", "| a | b |", kind="table")
+    assert result.startswith("search_document: Table:")
+    assert "| a | b |" in result
+
+
+def test_text_chunk_input_has_no_table_marker() -> None:
+    assert "Table:" not in chunk_embed_text("H", "body", kind="text")
+
+
+def test_figure_chunk_input_is_prefixed_with_a_figure_marker() -> None:
+    result = chunk_embed_text(
+        "Part I > Trees", "A binary tree with three levels.", kind="figure"
+    )
+    assert result.startswith("search_document: Figure:")
+    assert "A binary tree with three levels." in result
+
+
 # --------------------------------------------------------------------------
 # Sections
 # --------------------------------------------------------------------------

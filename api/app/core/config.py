@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""
     supabase_storage_bucket: str = "book-pdfs"
+    # Service-role key — used to upload (e.g. the optimized PDF copy). Falls back
+    # to supabase_key when unset.
+    supabase_service_role_key: str = ""
+
+    # ── PDF optimization (large files) ────────────────────────
+    # The in-browser PDF engine (PDFium/WASM) can't load very large PDFs. Above
+    # this size, ingest re-writes the file with Ghostscript (smaller, still
+    # readable) and points storage_url at the optimized copy.
+    pdf_optimize_enabled: bool = True
+    pdf_optimize_max_bytes: int = 12 * 1024 * 1024
+    pdf_optimize_preset: str = "/ebook"
 
     # ── Auth (Better Auth session table) ──────────────────────
     better_auth_session_table: str = "session"
@@ -30,6 +41,15 @@ class Settings(BaseSettings):
     # cookie/token in a dedicated column (default name ``token``), distinct
     # from the row ``id``. Requests are looked up by this column, not by id.
     better_auth_session_token_column: str = "token"
+    # Better Auth ``user`` table — used to resolve the current account's email
+    # for the admin allow-list. ``user`` is a reserved word in Postgres, so the
+    # lookup quotes it.
+    better_auth_user_table: str = "user"
+    better_auth_user_id_column: str = "id"
+    better_auth_user_email_column: str = "email"
+    # Comma-separated allow-list of admin emails. Only these accounts may create
+    # library books or trigger ingestion. Empty list = nobody (fail closed).
+    admin_emails: str = "aa2933395@gmail.com"
     # Deployment environment. "production" arms the fail-closed auth guard in
     # ``enforce_auth_config`` below (also honours the ``ENV`` env var).
     environment: str = "development"
@@ -98,6 +118,10 @@ class Settings(BaseSettings):
     # trades recall for a smaller prompt; raising it holds the word budget
     # instead, which is the fair way to compare chunk sizes.
     retrieval_top_k: int = 5
+    # Reorder the merged candidates by relevance before answering, then keep the
+    # top retrieval_top_k. Lightweight hybrid (embedding distance + query-term
+    # overlap); swap for a cross-encoder later without touching callers.
+    rerank_enabled: bool = True
 
     # ── Topic notes ───────────────────────────────────────────
     # Passages handed to the topic generator. Both bounds exist because they
@@ -151,8 +175,10 @@ class Settings(BaseSettings):
     # ── Q&A prompt dump (review aid) ──────────────────────────
     # Write the exact messages sent to the answer model (system + history +
     # context) to a markdown file so the prompt can be reviewed. Overwritten
-    # on each grounded turn. Disable in production.
-    qa_prompt_dump: bool = True
+    # on each grounded turn. Off by default — every grounded turn writes the
+    # full prompt (including user content) to disk, so enable only while
+    # reviewing a prompt.
+    qa_prompt_dump: bool = False
     qa_prompt_dump_path: str = "logs/qa-prompt.md"
 
     # ── Q&A agent (U11, revised) ──────────────────────────────
@@ -170,6 +196,31 @@ class Settings(BaseSettings):
     qa_agent_max_searches: int = 2
     # Routing is a classification step: keep it deterministic.
     qa_agent_temperature: float = 0.0
+
+    # ── Figures / diagrams ────────────────
+    # Whether ingestion captions figures at all. Off lets a future bulk re-ingest
+    # add tables without spending vision-model quota on captions.
+    figures_enabled: bool = True
+    # Vision model for figure captions (Gemma 4 26B, MoE, text+image) and its
+    # output cap. Sent through google-genai against GEMINI_API_KEY.
+    figure_caption_model: str = "gemma-4-26b-a4b-it"
+    # Gemma 4 spends a lot of output tokens on reasoning before the visible
+    # caption; below ~1000 the reply comes back empty (response.text == "").
+    # 1024 reliably yields a caption; the caption itself is only ~200 tokens.
+    figure_max_tokens: int = 1024
+    # Render resolution for the cropped figure sent to the model.
+    figure_dpi: int = 200
+    # A detected region must cover at least this fraction of the page and be at
+    # least this many points on each side to count as a figure.
+    figure_min_area_ratio: float = 0.03
+    figure_min_side: float = 60.0
+    # Vector-drawing rectangles within this many points are merged into one region.
+    figure_cluster_gap: float = 12.0
+    # Per-section cap so a single dense section cannot consume the whole budget.
+    figure_max_per_section: int = 12
+    # Free-tier Gemma limits: requests/minute and requests/day.
+    figure_rpm: int = 30
+    figure_rpd: int = 14400
 
     # ── Coverage scoring thresholds ───────────────────────────
     coverage_points_page_viewed: int = 1

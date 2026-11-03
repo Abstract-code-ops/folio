@@ -152,3 +152,60 @@ def test_guard_allows_auth_off_in_development(monkeypatch):
     monkeypatch.setattr(settings, "auth_required", False)
 
     enforce_auth_config()  # must not raise
+
+
+# ── Admin authorization (require_admin) ─────────────────────
+
+
+async def _make_user_table(db) -> None:
+    await db.execute(text('CREATE TABLE "user" (id TEXT PRIMARY KEY, email TEXT)'))
+
+
+async def _insert_user(db, *, user_id: uuid.UUID, email: str) -> None:
+    await db.execute(
+        text('INSERT INTO "user" (id, email) VALUES (:id, :email)'),
+        {"id": str(user_id), "email": email},
+    )
+
+
+async def test_require_admin_allows_listed_email(async_session, monkeypatch):
+    monkeypatch.setattr(settings, "admin_emails", "aa2933395@gmail.com")
+    await _make_user_table(async_session)
+    user_id = uuid.uuid4()
+    # Case-insensitive match: stored mixed-case, allow-list lowercase.
+    await _insert_user(async_session, user_id=user_id, email="AA2933395@gmail.com")
+
+    got = await auth.require_admin(user_id=user_id, db=async_session)
+
+    assert got == user_id
+
+
+async def test_require_admin_rejects_unlisted_email(async_session, monkeypatch):
+    monkeypatch.setattr(settings, "admin_emails", "aa2933395@gmail.com")
+    await _make_user_table(async_session)
+    user_id = uuid.uuid4()
+    await _insert_user(async_session, user_id=user_id, email="someone@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.require_admin(user_id=user_id, db=async_session)
+
+    assert exc.value.status_code == 403
+
+
+async def test_require_admin_rejects_unknown_user(async_session, monkeypatch):
+    monkeypatch.setattr(settings, "admin_emails", "aa2933395@gmail.com")
+    await _make_user_table(async_session)
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.require_admin(user_id=uuid.uuid4(), db=async_session)
+
+    assert exc.value.status_code == 403
+
+
+async def test_require_admin_rejects_when_allowlist_empty(async_session, monkeypatch):
+    monkeypatch.setattr(settings, "admin_emails", "")
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.require_admin(user_id=uuid.uuid4(), db=async_session)
+
+    assert exc.value.status_code == 403

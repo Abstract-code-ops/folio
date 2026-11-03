@@ -24,11 +24,13 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { apiClient } from "@/lib/api-client";
+import { authClient } from "@/lib/auth-client";
 import { useChatStore } from "@/lib/chat-store";
 import { useCiteBridge } from "@/lib/cite-bridge";
 import { makeLocalNote, useNotesNav, useNotesStore, type LocalLink } from "@/lib/notes-store";
 import { syncUserData } from "@/lib/sync";
 import { startNoteSync } from "@/lib/note-sync";
+import { ProductTour } from "@/components/tour/ProductTour";
 import type { BookResponse } from "@/types/books";
 import type { HighlightTarget, PdfSelection } from "@/components/reader/PdfViewer";
 
@@ -194,6 +196,9 @@ function ReaderContent() {
   const bookId = searchParams.get("id") ?? "";
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
+  const { data: session } = authClient.useSession();
+  const authed = Boolean(session?.user?.id);
+
   const [book, setBook] = useState<BookResponse | null>(null);
   const [bookLoading, setBookLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -235,10 +240,10 @@ function ReaderContent() {
   // chat history from the server; afterwards local is the cache. Auth-scoped
   // server-side, so this is "the user's data", not everyone's.
   useEffect(() => {
-    if (!bookId) return;
+    if (!bookId || !authed) return; // guests have no server-side data; skip the 401 sync
     startNoteSync();
     void syncUserData(bookId);
-  }, [bookId]);
+  }, [bookId, authed]);
 
   // Open where reading begins. Page 1 is the cover and copyright page in most
   // books, which is chrome, not reading; the first chapter-level section is where
@@ -493,7 +498,7 @@ function ReaderContent() {
             onExpand={() => setPanelCollapsed(false)}
             className="bg-bg-surface"
           >
-            <div id="study-panel" className="flex h-full min-h-0 flex-col">
+            <div id="study-panel" data-tour="tour-panel" className="flex h-full min-h-0 flex-col">
               {!panelCollapsed && (
                 <>
                   <Tabs
@@ -534,9 +539,10 @@ function ReaderContent() {
             className="bg-border-subtle hover:bg-accent/40 transition-colors data-[resize-handle-state=drag]:bg-accent"
           />
 
+                <ProductTour page="reader" />
           {/* PDF Viewer */}
           <ResizablePanel defaultSize={78} minSize={50}>
-            <main className="relative flex h-full flex-col bg-bg-reader min-w-0">
+            <main data-tour="tour-pdf" className="relative flex h-full flex-col bg-bg-reader min-w-0">
               <PdfViewer
                 url={book.storage_url}
                 pageNumber={currentPage}
@@ -593,6 +599,7 @@ function ReaderContent() {
 
       {/* PDF Viewer */}
       <main
+        data-tour="tour-pdf"
         onClick={() => setChromeHidden((hidden) => !hidden)}
         className={`relative flex-1 flex flex-col bg-bg-reader min-h-0 transition-[filter] motion-reduce:transition-none ${dim ? "brightness-[0.85]" : ""}`}
       >

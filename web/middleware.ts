@@ -1,40 +1,18 @@
-// Edge middleware — UX gating only, NOT the authorization boundary.
+// Edge middleware.
 //
-// This redirects visitors without a session cookie away from the reader and
-// library so they land on /sign-in instead of a broken page. It is deliberately
-// defense-in-depth: the real security boundary is FastAPI, which verifies the
-// session and ownership on every request. A page must never return sensitive
-// data merely because this middleware let the request through.
+// Guest mode is ON by design: unauthenticated visitors may browse the catalog
+// AND read books, with a small local trial of Q&A / notes. So nothing is
+// redirected here. The real authorization boundary is FastAPI — admin and
+// write endpoints require a session; guest Q&A streams but persists nothing.
 //
-// It is dormant unless NEXT_PUBLIC_AUTH_ENABLED=true, so wiring auth does not
-// lock anyone out before the Better Auth schema and sign-in flow are live.
+// The matcher is intentionally empty; keep this file so re-enabling a gate later
+// is a one-line change rather than a new file.
+import { NextResponse } from "next/server";
 
-import { NextRequest, NextResponse } from "next/server";
-
-const AUTH_ENABLED = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
-
-// Better Auth's session cookie (secure-prefixed in https deployments).
-const SESSION_COOKIES = [
-  "better-auth.session_token",
-  "__Secure-better-auth.session_token",
-];
-
-function hasSessionCookie(request: NextRequest): boolean {
-  return SESSION_COOKIES.some((name) => request.cookies.has(name));
-}
-
-export function middleware(request: NextRequest) {
-  if (!AUTH_ENABLED) return NextResponse.next();
-  if (hasSessionCookie(request)) return NextResponse.next();
-
-  const url = request.nextUrl.clone();
-  url.pathname = "/sign-in";
-  url.search = `?redirect=${encodeURIComponent(
-    request.nextUrl.pathname + request.nextUrl.search,
-  )}`;
-  return NextResponse.redirect(url);
+export function middleware() {
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/library/:path*", "/reader/:path*"],
+  matcher: [],
 };

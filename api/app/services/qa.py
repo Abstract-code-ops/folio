@@ -80,6 +80,8 @@ class ContextPassage:
     note: str = ""
     page_start: Optional[int] = None
     page_end: Optional[int] = None
+    kind: str = "text"
+    bbox: Optional[dict[str, Any]] = None
 
 
 def _siblings(
@@ -135,6 +137,8 @@ async def expand_context(
         note: str = "",
         page_start: Optional[int] = None,
         page_end: Optional[int] = None,
+        kind: str = "text",
+        bbox: Optional[dict[str, Any]] = None,
     ) -> ContextPassage:
         return ContextPassage(
             section=section,
@@ -147,6 +151,8 @@ async def expand_context(
             note=note,
             page_start=page_start,
             page_end=page_end,
+            kind=kind,
+            bbox=bbox,
         )
 
     passages: list[ContextPassage] = [
@@ -158,6 +164,8 @@ async def expand_context(
             chunk_index=chunk.chunk_index,
             page_start=chunk.page_start,
             page_end=chunk.page_end,
+            kind=chunk.kind,
+            bbox=chunk.bbox,
         )
         for chunk, distance in hits
     ]
@@ -201,6 +209,8 @@ async def expand_context(
                         note="neighbouring passage",
                         page_start=neighbour.page_start,
                         page_end=neighbour.page_end,
+                        kind=neighbour.kind,
+                        bbox=neighbour.bbox,
                     )
                 )
 
@@ -333,6 +343,8 @@ def _citation_event(number: int, passage: ContextPassage) -> dict[str, Any]:
         "page_start": page_start,
         "page_end": page_end,
         "excerpt": excerpt,
+        "kind": passage.kind,
+        "bbox": passage.bbox,
     }
 
 

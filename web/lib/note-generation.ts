@@ -1,6 +1,7 @@
 import { apiClient } from "./api-client";
 import { makeLocalNote, useNotesStore, type LocalBlock, type LocalNote } from "./notes-store";
 import { flushNoteSyncNow } from "./note-sync";
+import { notifyNoteReady } from "./notify";
 import type { GeneratedSectionNotes, NoteTopicEvent } from "@/types/notes";
 
 /**
@@ -91,6 +92,7 @@ async function runTopicGeneration(
         error: null,
       });
       void flushNoteSyncNow();
+      notifyNoteReady(doneTitle ?? topic);
     } else {
       patchNote(noteId, { status: "error", error: message ?? "Couldn't generate notes" });
     }
@@ -198,6 +200,7 @@ async function runChapterGeneration(
 
     patchNote(noteId, { blocks, status: undefined, error: null });
     void flushNoteSyncNow();
+    notifyNoteReady();
   } catch (err) {
     patchNote(noteId, {
       status: "error",

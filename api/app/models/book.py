@@ -46,6 +46,12 @@ class Book(TimestampMixin, Base):
         String(256),
         nullable=False,
     )
+    category: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+        comment="Library category (e.g. Computer Science, Mathematics, ...)",
+    )
     description: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,

@@ -100,6 +100,21 @@ async def embed_text(text: str, model: Optional[str] = None) -> list[float]:
     return _check_dimension(embeddings[0], target)
 
 
+async def embed_texts(texts: Sequence[str], model: Optional[str] = None) -> list[list[float]]:
+    """Embed several strings in ONE Ollama call (its ``input`` accepts a list)."""
+    target = model or EMBEDDING_MODEL
+    if not texts:
+        return []
+    client = _client()
+    response = await client.post(
+        _embed_endpoint(),
+        json={"model": target, "input": list(texts), "keep_alive": _KEEP_ALIVE},
+    )
+    response.raise_for_status()
+    embeddings = response.json().get("embeddings") or []
+    return [_check_dimension(vec, target) for vec in embeddings]
+
+
 def embed_text_sync(text: str, model: Optional[str] = None) -> list[float]:
     """Blocking variant, for Dramatiq workers."""
     target = model or EMBEDDING_MODEL

@@ -46,6 +46,7 @@ class ChunkResult(BaseModel):
     word_count: int
     page_start: Optional[int] = None
     page_end: Optional[int] = None
+    kind: str = "text"  # "text" | "table"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,6 +57,7 @@ class _Piece(BaseModel):
     text: str
     page_start: Optional[int] = None
     page_end: Optional[int] = None
+    kind: str = "text"
 
     @property
     def word_count(self) -> int:
@@ -115,6 +117,14 @@ def chunk_section(
             current_words = 0
 
     for piece in pieces:
+        if piece.kind == "table":
+            # Atomic: a table never shares a chunk with prose; an oversized
+            # table is split by rows with its header repeated.
+            flush()
+            for part in _split_table(piece, limit):
+                chunks.append(_build_chunk([part], len(chunks)))
+            continue
+
         if piece.word_count > limit:
             flush()
             for part in _split_oversized(piece, limit):
@@ -149,6 +159,7 @@ def _build_chunk(pieces: Sequence[_Piece], index: int) -> ChunkResult:
         word_count=len(text.split()),
         page_start=min(starts) if starts else None,
         page_end=max(ends) if ends else None,
+        kind=pieces[0].kind,
     )
 
 
@@ -160,30 +171,40 @@ def _pieces_from_text(raw_text: str) -> list[_Piece]:
 
 
 def _pieces_from_blocks(blocks: Sequence[_TextBlockLike]) -> list[_Piece]:
-    """Pieces from ordered blocks, with short blocks merged into a neighbour."""
+    """Pieces from ordered blocks. Tables stay atomic; short text merges."""
     raw: list[_Piece] = []
     for block in blocks:
-        if getattr(block, "block_type", "text") != "text":
-            continue
+        block_type = getattr(block, "block_type", "text")
+        if block_type not in ("text", "table"):
+            continue  # image blocks carry no text
         text = (getattr(block, "text", "") or "").strip()
         if not text:
             continue
         page = getattr(block, "page", None)
-        raw.append(_Piece(text=text, page_start=page, page_end=page))
+        raw.append(_Piece(text=text, page_start=page, page_end=page, kind=block_type))
     return _merge_short_pieces(raw)
 
 
 def _merge_short_pieces(pieces: Sequence[_Piece]) -> list[_Piece]:
-    """Attach short pieces to their following piece, or the previous one if last.
+    """Attach short text pieces to a neighbour; tables are hard boundaries.
 
-    A heading belongs with the paragraph it introduces, so merging forward is
-    the natural direction. A short trailing piece has nothing to attach to
-    ahead of it, so it merges backwards.
+    A heading belongs with the paragraph it introduces, so short text merges
+    forward (or backwards if it is last). A table never merges with prose and
+    closes any pending short text before it.
     """
     merged: list[_Piece] = []
     pending: Optional[_Piece] = None
 
     for piece in pieces:
+        if piece.kind == "table":
+            if pending is not None:
+                if merged and merged[-1].kind == "text":
+                    merged[-1] = _join(merged[-1], pending)
+                else:
+                    merged.append(pending)
+                pending = None
+            merged.append(piece)
+            continue
         if pending is not None:
             piece = _join(pending, piece)
             pending = None
@@ -193,7 +214,7 @@ def _merge_short_pieces(pieces: Sequence[_Piece]) -> list[_Piece]:
         merged.append(piece)
 
     if pending is not None:
-        if merged:
+        if merged and merged[-1].kind == "text":
             merged[-1] = _join(merged[-1], pending)
         else:
             merged.append(pending)
@@ -248,6 +269,46 @@ def _split_oversized(piece: _Piece, limit: int) -> list[_Piece]:
         _Piece(text=text, page_start=piece.page_start, page_end=piece.page_end)
         for text in groups
         if text.strip()
+    ]
+
+
+def _split_table(piece: _Piece, limit: int) -> list[_Piece]:
+    """Split an oversized Markdown table into row batches, repeating the header.
+
+    A table smaller than ``limit`` is returned unchanged. Otherwise the header
+    and separator rows are repeated at the top of each batch so every batch is
+    still a valid Markdown table.
+    """
+    lines = piece.text.splitlines()
+    if piece.word_count <= limit or len(lines) <= 2:
+        return [piece]
+
+    header = lines[:2]
+    rows = lines[2:]
+    header_words = len(" ".join(header).split())
+
+    groups: list[list[str]] = []
+    group: list[str] = []
+    group_words = 0
+    for row in rows:
+        row_words = len(row.split())
+        if group and header_words + group_words + row_words > limit:
+            groups.append(group)
+            group = []
+            group_words = 0
+        group.append(row)
+        group_words += row_words
+    if group:
+        groups.append(group)
+
+    return [
+        _Piece(
+            text="\n".join(header + batch),
+            page_start=piece.page_start,
+            page_end=piece.page_end,
+            kind="table",
+        )
+        for batch in groups
     ]
 
 

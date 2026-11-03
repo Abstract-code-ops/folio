@@ -149,8 +149,13 @@ export const auth = betterAuth({
     },
   },
 
-  // Throttle sign-in / sign-up / password-reset attempts.
+  // Throttle sign-in / sign-up / password-reset attempts. Explicit window and
+  // ceiling instead of the (generous) defaults. In-memory per Next instance —
+  // move to a shared store (better-auth rateLimit.storage) before running
+  // several instances behind a load balancer.
   rateLimit: {
     enabled: true,
+    window: 60,
+    max: 10,
   },
 });

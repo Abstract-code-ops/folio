@@ -339,3 +339,103 @@ def test_missing_heading_falls_back_and_warns(
     )
     # The section still gets content rather than coming out empty.
     assert result.sections[1].raw_text.strip()
+
+
+# --------------------------------------------------------------------------
+# Tables -> Markdown (Unit A)
+# --------------------------------------------------------------------------n
+
+
+class _FakeTable:
+    def __init__(self, bbox, rows):
+        self.bbox = bbox
+        self._rows = rows
+
+    def extract(self):
+        return self._rows
+
+
+class _FakeFinder:
+    def __init__(self, tables):
+        self.tables = tables
+
+
+class _FakePage:
+    def __init__(self, number, blocks, tables):
+        self.number = number
+        self._blocks = blocks
+        self._tables = tables
+
+    def get_text(self, mode):
+        assert mode == "blocks"
+        return self._blocks
+
+    def find_tables(self):
+        return _FakeFinder(self._tables)
+
+
+def test_rows_to_markdown_renders_gfm_table() -> None:
+    md = parser._rows_to_markdown([["Name", "Qty"], ["Apples", "3"], [None, None]])
+    lines = md.splitlines()
+    assert lines[0] == "| Name | Qty |"
+    assert lines[1] == "| --- | --- |"
+    assert "| Apples | 3 |" in md
+
+
+def test_rows_to_markdown_escapes_pipes_and_flattens_newlines() -> None:
+    md = parser._rows_to_markdown([["a|b"], ["line1\nline2"]])
+    assert "a\\|b" in md
+    assert "line1 line2" in md
+
+
+def test_extract_tables_builds_markdown_and_bbox() -> None:
+    table = _FakeTable((60.0, 100.0, 410.0, 200.0), [["Name", "Qty"], ["Apples", "3"]])
+    page = _FakePage(0, [], [table])
+
+    out = parser._extract_tables(page)
+
+    assert len(out) == 1
+    bbox, md = out[0]
+    assert bbox == (60.0, 100.0, 410.0, 200.0)
+    assert "| Name | Qty |" in md
+
+
+def test_extract_tables_is_best_effort() -> None:
+    class _BoomPage:
+        number = 0
+
+        def find_tables(self):
+            raise RuntimeError("nope")
+
+    assert parser._extract_tables(_BoomPage()) == []
+
+
+def test_page_blocks_add_table_and_suppress_cell_text() -> None:
+    long_before = (
+        "Paragraph before the table with plenty of text so OCR is not triggered. " * 2
+    )
+    long_after = (
+        "Paragraph after the table with plenty of text so OCR is not triggered. " * 2
+    )
+    blocks = [
+        (72.0, 40.0, 400.0, 80.0, long_before, 0, 0),
+        (72.0, 110.0, 400.0, 190.0, "Cell A Cell B Cell C", 1, 0),  # inside table bbox
+        (72.0, 300.0, 400.0, 340.0, long_after, 2, 0),
+    ]
+    table = _FakeTable((60.0, 100.0, 410.0, 200.0), [["Name", "Qty"], ["Apples", "3"]])
+    page = _FakePage(0, blocks, [table])
+
+    out = parser._extract_page_blocks(page)
+
+    assert any(b.block_type == "table" for b in out)
+    table_block = next(b for b in out if b.block_type == "table")
+    assert "| Name | Qty |" in table_block.text
+
+    text = "\n".join(b.text for b in out if b.block_type == "text")
+    assert "Cell A" not in text  # suppressed: it sits inside the table
+    assert "Paragraph before" in text
+    assert "Paragraph after" in text
+
+    # Reading order: the before-paragraph precedes the table block.
+    before = next(b for b in out if "Paragraph before" in b.text)
+    assert before.bbox[1] < table_block.bbox[1]

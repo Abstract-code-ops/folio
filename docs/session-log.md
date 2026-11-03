@@ -532,3 +532,48 @@ The local-first notes work + the chat "no reply" fix are done. Next up, in the c
 1. **Auth integration (Better Auth).** Replace the anonymous `get_current_user` fallback with real session sign-in. The per-user plumbing is already correct: every note/chat endpoint is `user_id`-scoped, and the cache-miss import (`syncUserData`) pulls *that user's* notes/chat — so once a real user id exists it "just works." Work to do: auth provider wiring (Better Auth session table already referenced in `models/qa_message.py` and `core/auth.py`), sign-in/out UI, gating `/reader`, and confirming the note/chat sync keys off the authenticated user (not the shared anonymous id).
 2. **Improve chat responses.** Known levers already documented: the routing prompt (typos/abbreviations), retrieval quality (pgvector `<=>` + Nomic/Ollama embeddings), the answer prompt & grounding invariant (protected — do not weaken citations), `qa_answer_max_tokens` output cap, provider resilience (VoidAI 520/ReadTimeout retries), and the "diagrams/figures" direction still awaiting a go-ahead (approach A: pymupdf figure crop + cite; B: Gemini captions + embed; C: ColPali vision embeddings — deferred).
 3. **Carry-overs:** browser-verify the note-sync + citation flows; run migration `0007`; remove the debug badge/counter; decide on dropping the now-idle `note_session.raw_text`/`status`/`matched_section_count` (kept — still written) and the dead per-note endpoints.
+
+---
+
+## Session — auth, chat UX, latency, and the LLM "response error" saga
+
+### Auth (Better Auth) — live
+- Better Auth wired into Next.js; `api/app/core/auth.py` validates by the `token` column and is **fail-closed** (`auth_required` default true + a production boot guard). User ids are UUIDs (`generateId → crypto.randomUUID()`, replacing nanoid). The `session`/`user`/`account`/`verification` tables live **outside Alembic** (Better Auth owns them); Supabase TLS handled in `web/lib/auth.ts`.
+- Sign-in page + email verification (dev console sender), middleware gating, `/eval` email allowlist (`EVAL_ALLOWED_EMAILS`), avatar → sign-out dropdown, library avatar, 30-day sessions, `/` → `/library` redirect for signed-in users.
+- **Per-user local caches** (`web/lib/user-scope.ts`): localStorage keys are namespaced `…:<userId>`, so two accounts on one browser no longer share notes/chat. Fixed the earlier "same data on both accounts" bug.
+
+### Notes & chat UX
+- Notes/chat are local-first. **Sync buttons** (notes header + chat tab bar) flush local edits then force-pull notes + chat from the server, with a 15 s cooldown — for laptop/phone parity.
+- Background **"generating…" note generation** (topic + chapter) runs at module level so it survives navigation; red "don't reload" warning while generating; interrupted generations are flagged on reload; empty drafts never sync.
+- Chat: assistant renders as **full-width tutor prose** (bubbles for user only), **KaTeX math + highlight.js code + GFM tables** (horizontal scroll), deliberate typewriter streaming (~166 cps, burst catch-up), 90 s stall watchdog, **resend-from-message** (truncate + regenerate) and a **Retry** on errors, and a **"thinking…" indicator** for the pre-token phase.
+- **Prompt relaxed to a tutor** (teach for understanding + markdown/math/code/tables) — the `GROUNDING_SYSTEM_PROMPT` is a **protected invariant**, so this change needs the out-of-scope eval (`check_grounding.py`) before deploy.
+
+### Latency / retrieval
+- Measured truth: DB round trips ≈0.5 s because the app (us-east-1) is **cross-region** from Supabase (**ap-southeast-2**). `/books` = 6 s cold → 0.6 s warm.
+- Read path: **AUTOCOMMIT** read engine, proxy session cache (60 s), auth token cache (30 s), books router TTL cache + `Cache-Control`, coverage map as a **single query**, startup DB + embedding warm-up, one shared `httpx` client.
+- Retrieval: each search on **its own `AsyncSession`** + agent runs a round's searches with **`asyncio.gather`** (parallel); skip the `has_children` `EXISTS` when unused; section-index TTL cache; query-embedding **LRU**; **hybrid rerank → top 5** (`Agent._rerank`); batch-embed helper (`embed_texts`); routing `reasoning_effort:"low"`.
+- Every cache is catalogued in **`docs/caching.md`**.
+
+### Migration 0008 (written, not applied)
+`CREATE INDEX ix_coverage_event_user_book_section ON coverage_event (user_id, book_id, section_id) INCLUDE (event_type)` — curator runs `docker exec folio-api-1 python3 -m alembic upgrade head`.
+
+---
+
+## The LLM (VoidAI) "response error" saga
+
+- **Symptom:** some questions hung then failed — "model provider did not respond", empty answers, and nothing recorded in `/eval`.
+- **Root cause (found by probing VoidAI directly):** `gpt-oss-20b` is a **reasoning model**. It spends tokens on hidden `reasoning_content` *before* any `content`. A small `max_completion_tokens` is consumed entirely by reasoning → **empty content**. The reasoning phase streams **no `content` deltas**, so the UI sees silence and it *looks* like a hang.
+- **More findings:**
+  - `reasoning_effort:"low"` collapses hidden thinking (measured **136 → 5** reasoning tokens, ~1.41 s → 0.88 s). Applied to the answer **and** the routing call.
+  - Large prompts (~3600 words) stream fine — **not** a size limit.
+  - VoidAI's **streaming** API exposes only `content`/`role` deltas — **no reasoning field** — so model reasoning **cannot** be displayed on the streaming path (the non-stream response has it). The eval therefore shows timing + error detail, not reasoning text.
+- **Resilience fixes:**
+  - Backend answer **read timeout 50 s** + overall **45 s** budget (checked each chunk); tighter routing timeout; client watchdog raised to **90 s** so the **server finishes and persists** the errored turn (previously the client aborted first and the turn was never saved).
+  - Client `finally` clears streaming/thinking **first** and races the typewriter, so the panel can't get stuck on "thinking".
+  - Failed turns now persist to `/eval` with `ttft`/`total` and the **actual provider error detail**; degenerate-loop guard + retry-before-first-token retained.
+- **Root cause is provider flakiness, not our code.** Alternatives researched: **Groq** (`api.groq.com/openai/v1`, free, same `openai/gpt-oss-20b`, tools+stream) is the best drop-in; **Gemini Flash** (OpenAI-compat, free) as an independent-vendor fallback; **DeepSeek** (cheap) as tier-3. Swap = `VOID_API_BASE` / `VOID_MODEL` / `VOID_API_KEY`. A **provider fallback chain** (primary → on 5xx/timeout before first token → replay on fallback) is the real robustness fix — **deferred by curator**.
+
+### Reranker research (current `_rerank` is a free hybrid)
+- Paid/best: **Cohere Rerank 4** (~400–570 ms, ~$2/1k searches); Voyage rerank-3 close.
+- Free/open: **Qwen3-Reranker-0.6B** (strongest at its size), **mxbai-rerank-v2** (fast CPU), **bge-reranker-v2-m3** (universal but ~2 s on CPU). Self-hosting needs `sentence-transformers` + torch.
+- Decision pending (curator): Cohere (quick, external) vs local open model; either is a body-swap in `Agent._rerank`.

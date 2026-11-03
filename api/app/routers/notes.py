@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.db import AsyncSessionLocal, get_async_session
+from app.core.ratelimit import rate_limit
 from app.models.coverage_event import CoverageEvent, EventType
 from app.models.note_session import NoteSource
 from app.models.section import Section
@@ -130,6 +131,7 @@ async def get_note_sessions(
 @router.post("", response_model=NoteSessionResponse, status_code=201)
 async def post_note_session(
     body: CreateNoteSessionRequest,
+    _rl: None = Depends(rate_limit("notes_create", 30, 60)),
     user_id: uuid.UUID = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ) -> NoteSessionResponse:
@@ -155,6 +157,7 @@ async def post_note_session(
 @router.post("/generate")
 async def post_generate_notes(
     body: GenerateNotesRequest,
+    _rl: None = Depends(rate_limit("notes_generate", 6, 60)),
     user_id: uuid.UUID = Depends(get_current_user),
 ) -> StreamingResponse:
     """Generate AI study notes for a chapter range, streamed section by section.
@@ -282,6 +285,7 @@ class GenerateTopicRequest(BaseModel):
 @router.post("/topic")
 async def post_topic_note(
     body: GenerateTopicRequest,
+    _rl: None = Depends(rate_limit("notes_topic", 20, 60)),
     user_id: uuid.UUID = Depends(get_current_user),
 ) -> StreamingResponse:
     """Generate notes from a topic, streamed as NDJSON events."""
@@ -322,75 +326,94 @@ async def _generate_notes_stream(
     chapter_end: int,
 ) -> AsyncGenerator[bytes, None]:
     """Async generator that yields NDJSON lines of generated notes."""
+    # Read the sections in a short session and copy out the fields we need, so no
+    # pooled connection is held while the per-section LLM calls run (a wide range
+    # can take minutes). Copying the fields also avoids a detached-ORM lazy load.
     async with AsyncSessionLocal() as db:
-        try:
-            # Fetch sections in the chapter range, ordered by hierarchy
-            result = await db.execute(
-                select(Section)
-                .where(
-                    Section.book_id == book_id,
-                    Section.chapter_index >= chapter_start,
-                    Section.chapter_index <= chapter_end,
-                )
-                .order_by(Section.chapter_index, Section.section_index)
+        result = await db.execute(
+            select(Section)
+            .where(
+                Section.book_id == book_id,
+                Section.chapter_index >= chapter_start,
+                Section.chapter_index <= chapter_end,
             )
-            sections = result.scalars().all()
+            .order_by(Section.chapter_index, Section.section_index)
+        )
+        rows = [
+            (
+                section.id,
+                section.heading,
+                section.raw_text,
+                section.page_start,
+                section.page_end,
+                section.section_metadata,
+                section.is_connective,
+            )
+            for section in result.scalars().all()
+        ]
 
-            if not sections:
-                yield json.dumps({"error": "No sections found in this chapter range"}).encode() + b"\n"
-                return
+    if not rows:
+        yield json.dumps({"error": "No sections found in this chapter range"}).encode() + b"\n"
+        return
 
-            for section in sections:
-                # Skip connective sections — too short for meaningful notes
-                if section.is_connective:
-                    continue
+    generated_section_ids: list[uuid.UUID] = []
+    for (
+        section_id,
+        heading,
+        raw_text,
+        page_start,
+        page_end,
+        metadata,
+        is_connective,
+    ) in rows:
+        # Skip connective sections — too short for meaningful notes
+        if is_connective:
+            continue
 
-                # Skip sections without raw text
-                if not section.raw_text:
-                    continue
+        # Skip sections without raw text
+        if not raw_text:
+            continue
 
-                try:
-                    notes = await generate_section_notes(
-                        section_id=str(section.id),
-                        heading=section.heading,
-                        raw_text=section.raw_text,
-                        page_start=section.page_start,
-                        page_end=section.page_end,
-                        metadata=section.section_metadata,
+        try:
+            notes = await generate_section_notes(
+                section_id=str(section_id),
+                heading=heading,
+                raw_text=raw_text,
+                page_start=page_start,
+                page_end=page_end,
+                metadata=metadata,
+            )
+            generated_section_ids.append(section_id)
+            # Yield the generated notes as NDJSON
+            yield notes.model_dump_json().encode() + b"\n"
+
+        except Exception as e:
+            logger.warning(
+                "Note generation failed for section %s: %s",
+                section_id, e,
+            )
+            # Yield a minimal error placeholder so the stream continues
+            error_line = json.dumps({
+                "section_id": str(section_id),
+                "section_heading": heading,
+                "error": str(e),
+            })
+            yield error_line.encode() + b"\n"
+
+    # Persist coverage events for the sections that generated, in one short
+    # transaction — no connection was held during generation above.
+    if generated_section_ids:
+        async with AsyncSessionLocal() as db:
+            for section_id in generated_section_ids:
+                db.add(
+                    CoverageEvent(
+                        user_id=user_id,
+                        book_id=book_id,
+                        section_id=section_id,
+                        event_type=EventType.NOTES_GENERATED,
+                        event_metadata={
+                            "chapter_range": f"{chapter_start}-{chapter_end}",
+                        },
                     )
-
-                    # Emit coverage event for this section
-                    db.add(
-                        CoverageEvent(
-                            user_id=user_id,
-                            book_id=book_id,
-                            section_id=section.id,
-                            event_type=EventType.NOTES_GENERATED,
-                            event_metadata={
-                                "chapter_range": f"{chapter_start}-{chapter_end}",
-                            },
-                        )
-                    )
-                    await db.flush()
-
-                    # Yield the generated notes as NDJSON
-                    yield notes.model_dump_json().encode() + b"\n"
-
-                except Exception as e:
-                    logger.warning(
-                        "Note generation failed for section %s: %s",
-                        section.id, e,
-                    )
-                    # Yield a minimal error placeholder so the stream continues
-                    error_line = json.dumps({
-                        "section_id": str(section.id),
-                        "section_heading": section.heading,
-                        "error": str(e),
-                    })
-                    yield error_line.encode() + b"\n"
-
+                )
             await db.commit()
-
-        except Exception:
-            await db.rollback()
-            raise

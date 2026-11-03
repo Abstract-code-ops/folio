@@ -1,18 +1,17 @@
 """Book selection, ingestion status, and ingestion trigger route handlers.
 
 Browse endpoints are unauthenticated — library browsing does not
-require a user account (see docs/project-overview.md). The ingestion
-trigger endpoint is authenticated since it initiates background work.
+require a user account (see docs/project-overview.md). Creating, deleting and
+triggering ingestion are admin-only (see ``app.core.auth.require_admin``).
 
-Reads use an AUTOCOMMIT session and a small in-process TTL cache: the book list
-and a book's section tree are shared, slow-changing data, so caching removes
-repeat DB round trips. The cache lives in the router (not the service) so
-service unit tests are unaffected.
+Reads use an AUTOCOMMIT session. The book list and a book's section tree are
+shared, slow-changing data, so responses advertise a short public HTTP
+Cache-Control window and the browser revalidates rather than re-querying on
+every navigation.
 """
 
 from __future__ import annotations
 
-import time
 import uuid
 from typing import Optional
 
@@ -20,36 +19,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import require_admin
 from app.core.db import get_async_session, get_read_session
 from app.models.book import IngestionStatus
 from app.services.books import (
     BookDetailResponse,
     BookListResponse,
     BookResponse,
+    IngestProgressResponse,
     create_book,
+    delete_book,
     get_book,
+    get_ingest_progress,
     list_books,
     trigger_ingestion,
+    update_book_category,
 )
 
 router = APIRouter(prefix="/books", tags=["books"])
-
-# Tiny TTL cache for library reads. Books change only on ingest, so a short TTL
-# removes repeat round trips without needing explicit invalidation.
-_CACHE_TTL = 30.0
-_CACHE: dict[str, tuple[float, object]] = {}
-
-
-def _cache_get(key: str) -> object | None:
-    item = _CACHE.get(key)
-    if item is not None and time.monotonic() - item[0] < _CACHE_TTL:
-        return item[1]
-    return None
-
-
-def _cache_set(key: str, value: object) -> None:
-    _CACHE[key] = (time.monotonic(), value)
 
 
 class CreateBookRequest(BaseModel):
@@ -57,6 +44,7 @@ class CreateBookRequest(BaseModel):
 
     title: str
     author: str
+    category: Optional[str] = None
     description: Optional[str] = None
     cover_image_url: Optional[str] = None
     storage_url: str
@@ -72,6 +60,7 @@ class IngestionJobResponse(BaseModel):
 @router.post("", response_model=BookResponse, status_code=201)
 async def post_create_book(
     body: CreateBookRequest,
+    _admin: uuid.UUID = Depends(require_admin),
     db: AsyncSession = Depends(get_async_session),
 ) -> BookResponse:
     """Add a new book to the open-access library."""
@@ -79,6 +68,7 @@ async def post_create_book(
         db,
         title=body.title,
         author=body.author,
+        category=body.category,
         storage_url=body.storage_url,
         description=body.description,
         cover_image_url=body.cover_image_url,
@@ -99,14 +89,7 @@ async def get_books(
     """List all books, optionally filtered by ingestion status."""
     response.headers["Cache-Control"] = "public, max-age=30"
 
-    key = f"list:{status}:{limit}:{offset}"
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached  # type: ignore[return-value]
-
-    result = await list_books(db, status=status, limit=limit, offset=offset)
-    _cache_set(key, result)
-    return result
+    return await list_books(db, status=status, limit=limit, offset=offset)
 
 
 @router.get("/{book_id}", response_model=BookDetailResponse)
@@ -122,28 +105,74 @@ async def get_book_by_id(
     """Return a single book by ID."""
     response.headers["Cache-Control"] = "public, max-age=30"
 
-    key = f"detail:{book_id}:{load_sections}"
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached  # type: ignore[return-value]
-
     book = await get_book(db, book_id, load_sections=load_sections)
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
-    _cache_set(key, book)
     return book
+
+
+@router.get("/{book_id}/ingest/status", response_model=IngestProgressResponse)
+async def get_ingest_status(
+    book_id: uuid.UUID,
+    _admin: uuid.UUID = Depends(require_admin),
+    db: AsyncSession = Depends(get_read_session),
+) -> IngestProgressResponse:
+    """Live ingestion progress for a book, for the admin ingest page.
+
+    Counts (sections, chunks, figures, tables) come from the tables, so the
+    values are accurate and survive the browser navigating away and back.
+    Admin-only (the ingest trigger is admin-only too).
+    """
+    progress = await get_ingest_progress(db, book_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return progress
 
 
 @router.post("/{book_id}/ingest", response_model=IngestionJobResponse)
 async def post_ingest_book(
     book_id: uuid.UUID,
+    force: bool = Query(False, description="Re-run even if already ingested"),
     db: AsyncSession = Depends(get_async_session),
-    user_id: uuid.UUID = Depends(get_current_user),
+    _admin: uuid.UUID = Depends(require_admin),
 ) -> IngestionJobResponse:
-    """Trigger background ingestion for a book."""
+    """Trigger background ingestion for a book (``?force=true`` to re-run)."""
     try:
-        job_id = await trigger_ingestion(db, book_id)
+        job_id = await trigger_ingestion(db, book_id, force=force)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     return IngestionJobResponse(book_id=book_id, job_id=job_id)
+
+
+@router.delete("/{book_id}", status_code=204)
+async def delete_book_by_id(
+    book_id: uuid.UUID,
+    db: AsyncSession = Depends(get_async_session),
+    _admin: uuid.UUID = Depends(require_admin),
+) -> Response:
+    """Delete a book and all of its data (admin only)."""
+    deleted = await delete_book(db, book_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return Response(status_code=204)
+
+
+class UpdateBookCategoryRequest(BaseModel):
+    """Request body for ``PATCH /books/{id}`` (category edit)."""
+
+    category: Optional[str] = None
+
+
+@router.patch("/{book_id}", response_model=BookResponse)
+async def patch_book_category(
+    book_id: uuid.UUID,
+    body: UpdateBookCategoryRequest,
+    db: AsyncSession = Depends(get_async_session),
+    _admin: uuid.UUID = Depends(require_admin),
+) -> BookResponse:
+    """Set or clear a book's category (admin only)."""
+    book = await update_book_category(db, book_id, body.category)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book

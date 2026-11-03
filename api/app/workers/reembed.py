@@ -120,7 +120,7 @@ async def reembed_book(
         )
         for chunk in chunks:
             chunk.embedding = await embedder(
-                chunk_embed_text(breadcrumb, chunk.content)
+                chunk_embed_text(breadcrumb, chunk.content, kind=chunk.kind)
             )
             chunk.embed_version = EMBED_VERSION
         chunk_total += len(chunks)

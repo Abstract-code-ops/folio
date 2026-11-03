@@ -14,6 +14,7 @@ from sqlalchemy import select
 from app.models.book import Book
 from app.models.chunk import Chunk
 from app.models.section import Section
+from app.pipeline.embed_inputs import EMBED_VERSION
 from app.pipeline.parser import ParsedSection, ParseResult, TextBlock
 from app.workers import ingest
 from app.workers.ingest import persist_parse_result
@@ -187,7 +188,7 @@ async def test_chunks_carry_page_ranges_from_their_blocks(session, fake_metadata
     assert (part_chunks[0].page_start, part_chunks[0].page_end) == (1, 1)
 
 
-async def test_everything_written_is_at_embed_version_2(session, fake_metadata) -> None:
+async def test_everything_written_is_at_current_embed_version(session, fake_metadata) -> None:
     book = _book(session)
 
     await persist_parse_result(
@@ -198,9 +199,12 @@ async def test_everything_written_is_at_embed_version_2(session, fake_metadata) 
     )
 
     assert all(
-        section.embed_version == 2 for section in session.scalars(select(Section))
+        section.embed_version == EMBED_VERSION
+        for section in session.scalars(select(Section))
     )
-    assert all(chunk.embed_version == 2 for chunk in session.scalars(select(Chunk)))
+    assert all(
+        chunk.embed_version == EMBED_VERSION for chunk in session.scalars(select(Chunk))
+    )
 
 
 async def test_embedding_inputs_carry_the_prefix_and_breadcrumb(
@@ -355,7 +359,7 @@ async def test_a_section_with_page_less_chunks_is_reprocessed(
 
     assert second["skipped"] == 2
     session.refresh(chapter)
-    assert chapter.embed_version == 2
+    assert chapter.embed_version == EMBED_VERSION
     rebuilt = list(session.scalars(select(Chunk).where(Chunk.section_id == chapter.id)))
     assert rebuilt
     assert all(chunk.page_start is not None for chunk in rebuilt)

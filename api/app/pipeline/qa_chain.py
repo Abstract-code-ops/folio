@@ -167,11 +167,14 @@ def build_context(
     for rank, (passage, _score) in enumerate(passages, start=1):
         section = passage.section
         role = getattr(passage, "role", "match")
+        kind = getattr(passage, "kind", "text")
         path = getattr(passage, "breadcrumb", "") or section.heading
         header = (
             f"[{rank}] role={role} | {path} | "
             f"{_page_label(section.page_start, section.page_end)}"
         )
+        if kind in ("table", "figure"):
+            header += f" | kind={kind}"
         note = getattr(passage, "note", "")
         if note:
             header += f" | {note}"
