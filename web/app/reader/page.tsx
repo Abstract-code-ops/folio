@@ -41,7 +41,6 @@ const PdfViewer = dynamicImport(
 
 type TabId = "coverage" | "chat" | "notes";
 const ALL_TABS: { id: TabId; icon: typeof Brain; label: string }[] = [
-  { id: "coverage", icon: Brain, label: "Coverage" },
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "notes", icon: FileText, label: "Notes" },
 ];
@@ -218,7 +217,7 @@ function ReaderContent() {
     if (panelCollapsed) panelRef.current?.expand();
     else panelRef.current?.collapse();
   }, [panelCollapsed]);
-  const [activeTab, setActiveTab] = useState<TabId>("coverage");
+  const [activeTab, setActiveTab] = useState<TabId>("chat");
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
   useEffect(() => {

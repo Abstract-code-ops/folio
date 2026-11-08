@@ -21,13 +21,6 @@ export const landing = {
     // `spine` = cloth token 1–8. Copy is placeholder — edit freely.
     books: [
       {
-        label: "Coverage",
-        title: "See what you've covered",
-        subtitle:
-          "Your lecture notes leave gaps. Folio maps them against the whole book.",
-        spine: 2,
-      },
-      {
         label: "Read first",
         title: "Read first, ask after",
         subtitle:
@@ -42,16 +35,10 @@ export const landing = {
         spine: 6,
       },
       {
-        label: "The map",
-        title: "One map of the whole book",
-        subtitle: "Every chapter and section, filled in as you study.",
-        spine: 5,
-      },
-      {
         label: "Depth",
         title: "From notes to real depth",
         subtitle:
-          "Turn thin lecture notes into coverage of the actual textbook.",
+          "Turn thin lecture notes into a working understanding of the textbook.",
         spine: 3,
       },
     ],

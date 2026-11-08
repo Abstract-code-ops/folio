@@ -31,7 +31,6 @@ from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.ratelimit import rate_limit, rate_limit_by_ip
 from app.models.book import Book
-from app.models.coverage_event import CoverageEvent, EventType
 from app.models.qa_message import QAMessage
 from app.pipeline.agent import BookAgent
 from app.pipeline.qa_chain import (
@@ -336,16 +335,6 @@ async def _qa_stream(
                 )
                 db.add(qa_message)
                 await db.flush()
-                for sid in matched_ids:
-                    db.add(
-                        CoverageEvent(
-                            user_id=user_id,
-                            book_id=book_id,
-                            section_id=sid,
-                            event_type=EventType.QA_ASKED,
-                            event_metadata={"qa_message_id": str(qa_message.id)},
-                        )
-                    )
                 await db.commit()
                 yield json.dumps({
                     "type": "done",

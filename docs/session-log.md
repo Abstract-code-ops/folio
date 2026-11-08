@@ -577,3 +577,32 @@ The local-first notes work + the chat "no reply" fix are done. Next up, in the c
 - Paid/best: **Cohere Rerank 4** (~400–570 ms, ~$2/1k searches); Voyage rerank-3 close.
 - Free/open: **Qwen3-Reranker-0.6B** (strongest at its size), **mxbai-rerank-v2** (fast CPU), **bge-reranker-v2-m3** (universal but ~2 s on CPU). Self-hosting needs `sentence-transformers` + torch.
 - Decision pending (curator): Cohere (quick, external) vs local open model; either is a body-swap in `Agent._rerank`.
+
+---
+
+## Session: tables + figures ingestion, admin console, guest mode, observability, categories, PDF delivery, licensing audit
+
+**Caches & hardening (early):** removed dead caches (`useNotesCache`, `cachedToken`, server `_CACHE`); added app-level rate limiting per user (429 + Retry-After) on AI endpoints; admin-only gating (`require_admin` by Better Auth email allow-list) on `POST /books`, `POST /books/{id}/ingest`, and status/delete; made streaming endpoints release the pooled DB connection before streaming.
+
+**Tables (Units A–E):** parser `page.find_tables()` → GFM Markdown blocks (suppresses overlapping cell text); chunker keeps tables atomic (row-batch split, header repeat); `chunk.kind` column + migration **0009**; ingest persists `kind`, `chunk_embed_text(kind="table")` prefix; `EMBED_VERSION` 2→3; retrieval tags `kind=table` in context + citations.
+
+**Figures (Unit F):** `pipeline/figure.py` detects all diagram types (raster image rects + clustered vector-drawing rects, table-overlap excluded, size-filtered), crops PNGs, and captions with **Gemma 4 26B** (`gemma-4-26b-a4b-it`) via google-genai under a `CaptionPacer` (30 RPM / 14.4K RPD, 429 `retryDelay` backoff). Figure chunks store **bbox + caption only** (`chunk.bbox` JSONB, migration **0010**). Ingest phase (`_ingest_figures`/`_run_figure_phase`) is idempotent + quota soft-stop; retrieval surfaces `kind=figure` + `bbox` in citations.
+- **Bugs found & fixed:** `figure_max_tokens=200` returned **empty captions** (Gemma spends tokens on reasoning first) → raised to **1024**; transient `500 INTERNAL` from Gemma weren't retried → `generate_with_backoff` now retries 5xx/timeout too.
+
+**Ingestion runner:** no Dramatiq worker (box OOMs on a 2nd Ollama) → ingestion runs **in-process** in the API via a background thread calling portable `run_ingest(book_id)` (serialized by a module lock). Startup resets stale `PROCESSING → FAILED`. CLI `ingest.py` fixed (was calling non-existent `_run_pipeline`).
+
+**Admin console:** `/admin` hub → **`/ingest`** page: list books with status, **Start ingestion** / **Re-ingest (force)**, live progress console polling `GET /books/{id}/ingest/status` (DB-derived sections/chunks/figures/tables), **Add a book**, **Delete book**, and **category editing** (`PATCH /books/{id}`). Provenance counts come from live row counts.
+
+**DB connections:** Supabase session-mode pooler caps **15 clients** → engine pools resized (async 5+3, sync 2+2 = 12) + `pool_pre_ping`/`pool_recycle` to stop `EMAXCONNSESSION` 500s during ingest.
+
+**Observability:** Sentry wired (web `instrumentation.ts`/`instrumentation-client.ts` from env DSNs; API `sentry_sdk.init` from `SENTRY_DSN`). PostHog analytics (`PostHogProvider`, autocapture + manual `$pageview`). Removed the stale `tsconfig.tsbuildinfo` that was the real "Sentry build blocker". Production build must run with `NODE_ENV=production`.
+
+**Categories:** `book.category` + migration **0011**; admin add-book + edit; library chips derived from data. Library now shows **completed books only** (not-started/processing hidden).
+
+**PDF delivery:** in-browser viewer went through `/api/pdf` (Range proxy). Fixed inconsistent/hanging loads by **buffering small files (exact Content-Length)** / **streaming >30 MB** (no length mismatch), and not caching 206 partials. The 34 MB "just use postgres" PDF then failed in the WASM engine → added **ingest-time optimization**: PDFs over 12 MB are re-written with **Ghostscript `/ebook`** (downsample, keep text), uploaded to `optimized/<id>.pdf`, `storage_url` repointed.
+
+**Guest mode:** unauthenticated visitors can read; **10 Q&A turns + 3 notes**, stored **client-side only** (nothing persisted). Backend `get_optional_user` lets QA stream anonymously with **no DB writes**; IP rate-limit. On login the guest bucket is discarded and the account's data (or empty) loads via user-scoped storage. Note-generation ("From a topic"/"chapter") is gated for guests.
+
+**UX:** sonner toasts — subtle **"Sign in to save…"** on unauthorized + **"Note ready"** on note completion. driver.js **first-visit tour** on `/library` and `/reader`.
+
+**Licensing audit (key finding):** web deps all permissive (MIT/Apache/BSD); **`@embedpdf` MIT**. But **PyMuPDF (`fitz`/`pymupdf4llm`) and Ghostscript are AGPL-3.0** → require a commercial license from Artifex (or open-sourcing the whole app) for a proprietary/SaaS product. Recommended swap: `pypdfium2` (parsing/render) + `pikepdf` (recompression). Separately: **serving copyrighted PDFs (DDIA, etc.) publicly is copyright infringement** — only host public-domain / CC-licensed / author-permitted books (SICP CC BY-SA is fine).

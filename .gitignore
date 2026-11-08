@@ -5,11 +5,6 @@ __pycache__/
 node_modules/
 .next/
 .reasonix/
-# Ignore all Markdown files
+# Ignore all Markdown files — only README.md is committed.
 *.md
-
-# But don't ignore README.md, docs/dev-scripts.md or docs/session-log.md
 !README.md
-!docs/dev-scripts.md
-!docs/session-log.md
-!web/content/founder-note.md

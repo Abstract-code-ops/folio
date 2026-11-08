@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI
 
 from app.core.config import enforce_auth_config, settings
-from app.routers import books, coverage, notes, qa
+from app.routers import books, notes, qa
 
 # Fail closed: refuse to boot if authentication is disabled in production.
 enforce_auth_config()
@@ -88,6 +88,5 @@ async def _warm_db_pool() -> None:
 
 
 app.include_router(books.router)
-app.include_router(coverage.router)
 app.include_router(notes.router)
 app.include_router(qa.router)
