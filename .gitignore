@@ -9,7 +9,6 @@ build.sh
 web/auth-schema.sql
 web/scripts/
 dev-scripts/
-api/alembic/
 api/evals/
 api/logs/
 api/scripts/
