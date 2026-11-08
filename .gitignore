@@ -6,7 +6,6 @@ node_modules/
 .next/
 .reasonix/
 build.sh
-docs/
 web/auth-schema.sql
 web/scripts/
 dev-scripts/
@@ -14,8 +13,10 @@ api/alembic/
 api/evals/
 api/logs/
 api/scripts/
-api/tests/	
-# Ignore all Markdown files — only README.md is committed.
+api/tests/
+docs/*
+!docs/setup/
+!docs/setup/**	
 *.md
 web/public/animations/README.txt
 !README.md

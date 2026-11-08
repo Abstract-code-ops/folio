@@ -124,6 +124,5 @@ Issues and ideas are welcome. Please open an issue before sending a large pull r
 
 ## License
 
-<!-- Choose a license for the code (for example MIT or Apache-2.0) and add a LICENSE file. -->
-The code is licensed under **[choose a license]**. The books in the library keep their own licenses, shown on each book's page.
+The code is licensed under **APGL-3.0**. The books in the library keep their own licenses, shown on each book's page.
 
