@@ -5,7 +5,6 @@ __pycache__/
 node_modules/
 .next/
 .reasonix/
-.gitignore
 build.sh
 docs/
 web/auth-schema.sql
