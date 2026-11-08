@@ -5,6 +5,18 @@ __pycache__/
 node_modules/
 .next/
 .reasonix/
+.gitignore
+build.sh
+docs/
+web/auth-schema.sql
+web/scripts/
+dev-scripts/
+api/alembic/
+api/evals/
+api/logs/
+api/scripts/
+api/tests/	
 # Ignore all Markdown files — only README.md is committed.
 *.md
+web/public/animations/README.txt
 !README.md
