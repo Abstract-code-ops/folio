@@ -15,8 +15,9 @@ api/logs/
 api/scripts/
 api/tests/
 docs/*
-!docs/setup/
-!docs/setup/**	
 *.md
 web/public/animations/README.txt
 !README.md
+!docs/setup/
+!docs/setup/**
+
