@@ -5,7 +5,7 @@ Adding a book = **(1) put the PDF somewhere public** → **(2) register it in th
 
 > ⚠️ **Licensing:** only add books you have the **right to redistribute** (public domain,
 > CC-licensed OER like OpenStax/SICP, or author-permitted). Do **not** host copyrighted
-> books (e.g. O'Reilly DDIA) or pirated PDFs. See the licensing notes at the end.
+> books or pirated PDFs. See the licensing notes at the end.
 
 ## Step 1 — Upload the PDF to storage
 Upload to Supabase Storage (bucket `book-pdfs`, public) or any **publicly reachable PDF URL**.
